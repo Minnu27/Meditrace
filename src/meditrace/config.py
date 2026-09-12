@@ -8,6 +8,21 @@ from dotenv import load_dotenv
 from sqlalchemy.engine import URL
 
 
+def _integer_env(name: str, default: int, *, maximum: int | None = None) -> int:
+    """Treat empty dashboard fields as unset; reject invalid explicit values."""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a positive integer or left blank") from None
+    if value <= 0 or (maximum is not None and value > maximum):
+        limit = f" between 1 and {maximum}" if maximum else " greater than 0"
+        raise ValueError(f"{name} must be an integer{limit}")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str = "sqlite:///./meditrace.db"
@@ -38,7 +53,7 @@ class Settings:
                 username=os.getenv("MYSQL_USER"),
                 password=os.getenv("MYSQL_PASSWORD"),
                 host=os.environ["MYSQL_HOST"],
-                port=int(os.getenv("MYSQL_PORT", "3306")),
+                port=_integer_env("MYSQL_PORT", 3306, maximum=65535),
                 database=os.getenv("MYSQL_DATABASE", "Meditrace"),
                 query={"charset": "utf8mb4"},
             ).render_as_string(hide_password=False)
@@ -60,11 +75,8 @@ class Settings:
             or ("sqlite:////tmp/meditrace.db" if vercel else cls.database_url),
             object_store_path=os.getenv("OBJECT_STORE_PATH")
             or ("/tmp/meditrace-documents" if vercel else cls.object_store_path),
-            max_upload_bytes=int(
-                os.getenv(
-                    "MAX_UPLOAD_BYTES",
-                    "4000000" if vercel else str(cls.max_upload_bytes),
-                )
+            max_upload_bytes=_integer_env(
+                "MAX_UPLOAD_BYTES", 4000000 if vercel else cls.max_upload_bytes
             ),
             object_store_backend=backend,
             mysql_ssl=os.getenv("MYSQL_SSL", "true" if vercel else "false").lower()

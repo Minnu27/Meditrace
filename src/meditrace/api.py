@@ -4,15 +4,16 @@ from contextlib import asynccontextmanager
 from hashlib import sha256
 from pathlib import Path
 import uuid
+import logging
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from .config import get_settings
-from .database import create_schema, get_session
+from .database import create_schema, get_session, engine
 from .extraction import HttpModelProvider, extract_text
 from .models import Document, ExtractionJob, Fact
 from .schemas import (
@@ -27,7 +28,7 @@ from .schemas import (
     TimelineEntry,
     TimelineRead,
 )
-from .storage import LocalObjectStore
+from .storage import build_object_store
 
 DISCLAIMER = "Decision-support prototype on synthetic/de-identified research data — not a diagnostic device."
 ALLOWED_MEDIA_TYPES = {
@@ -38,12 +39,21 @@ ALLOWED_MEDIA_TYPES = {
     "text/csv",
 }
 settings = get_settings()
-store = LocalObjectStore(settings.object_store_path)
+store = build_object_store(settings)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    create_schema()
+    try:
+        create_schema()
+    except Exception as exc:
+        if not settings.serverless:
+            raise
+        # Do not log exception messages that may contain connection credentials.
+        logging.getLogger(__name__).error(
+            "Database initialization failed (%s). Check database settings and run init_db.",
+            type(exc).__name__,
+        )
     yield
 
 
@@ -56,11 +66,25 @@ app = FastAPI(
 
 
 @app.get("/api/health", response_model=HealthRead)
-def health() -> HealthRead:
+def health(response: Response) -> HealthRead:
+    database_status = "connected"
+    storage_status = "connected"
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception:
+        database_status = "unavailable"
+    try:
+        store.check()
+    except Exception:
+        storage_status = "unavailable"
+    ok = database_status == storage_status == "connected"
+    if not ok:
+        response.status_code = 503
     return HealthRead(
-        status="ok",
-        database="connected",
-        object_store="connected",
+        status="ok" if ok else "degraded",
+        database=database_status,
+        object_store=storage_status,
         model="configured" if settings.model_endpoint else "not_configured",
     )
 

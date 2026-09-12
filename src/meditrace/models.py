@@ -3,7 +3,18 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 import uuid
 
-from sqlalchemy import Date, DateTime, Enum, Float, ForeignKey, Integer, JSON, String
+from sqlalchemy import (
+    Date,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    LargeBinary,
+)
+from sqlalchemy.dialects.mysql import LONGBLOB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from .schemas import DocumentStatus, DocumentType
@@ -75,4 +86,14 @@ class ExtractionJob(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class StoredObject(Base):
+    """Small source files shared by the API and worker through the database."""
+
+    __tablename__ = "stored_objects"
+    object_key: Mapped[str] = mapped_column(String(512), primary_key=True)
+    content: Mapped[bytes] = mapped_column(
+        LargeBinary().with_variant(LONGBLOB(), "mysql")
     )

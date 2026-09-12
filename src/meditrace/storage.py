@@ -28,3 +28,58 @@ class LocalObjectStore:
 
     def delete(self, key: str) -> None:
         (self.root / key).unlink(missing_ok=True)
+
+    def check(self) -> None:
+        from uuid import uuid4
+
+        key = f".health-{uuid4().hex}"
+        try:
+            self.put(key, b"ok")
+            if self.get(key) != b"ok":
+                raise OSError("Storage read-back failed")
+        finally:
+            self.delete(key)
+
+
+class DatabaseObjectStore:
+    def __init__(self, session_factory):
+        self.session_factory = session_factory
+
+    def put(self, key: str, content: bytes) -> None:
+        from .models import StoredObject
+
+        with self.session_factory() as session:
+            session.add(StoredObject(object_key=key, content=content))
+            session.commit()
+
+    def get(self, key: str) -> bytes:
+        from .models import StoredObject
+
+        with self.session_factory() as session:
+            item = session.get(StoredObject, key)
+            if item is None:
+                raise FileNotFoundError("Source document not found")
+            return item.content
+
+    def delete(self, key: str) -> None:
+        from sqlalchemy import delete
+        from .models import StoredObject
+
+        with self.session_factory() as session:
+            session.execute(delete(StoredObject).where(StoredObject.object_key == key))
+            session.commit()
+
+    def check(self) -> None:
+        from sqlalchemy import select
+        from .models import StoredObject
+
+        with self.session_factory() as session:
+            session.execute(select(StoredObject.object_key).limit(1))
+
+
+def build_object_store(settings):
+    if settings.object_store_backend == "database":
+        from .database import SessionLocal
+
+        return DatabaseObjectStore(SessionLocal)
+    return LocalObjectStore(settings.object_store_path)

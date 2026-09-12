@@ -10,12 +10,12 @@ from .database import SessionLocal, create_schema
 from .extraction import classify_document, deterministic_facts, extract_text
 from .models import Document, ExtractionJob, Fact
 from .schemas import DocumentStatus, FactCreate
-from .storage import LocalObjectStore
+from .storage import build_object_store
 
 
 def process_one() -> bool:
     settings = get_settings()
-    store = LocalObjectStore(settings.object_store_path)
+    store = build_object_store(settings)
     with SessionLocal() as session:
         job = session.scalar(
             select(ExtractionJob)

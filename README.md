@@ -45,14 +45,15 @@ uvicorn src.meditrace.api:app --reload
 
 The compose service is intended for local development only. Change its credentials before using it outside an isolated development machine.
 
-### Vercel
+### MySQL and Vercel
 
-The repository includes `api/index.py` as the explicit ASGI function and
-`vercel.json` routes both the API and bundled web interface to it. The default
-runtime dependency set intentionally excludes PyTorch and the legacy CXR stack
-to keep the serverless function within deployment limits. Configure a durable
-`DATABASE_URL`/`POSTGRES_URL` in the Vercel project for persistent metadata;
-SQLite and uploaded files under `/tmp` are ephemeral between invocations.
+See [MySQL setup and deployment](docs/MYSQL_DEPLOYMENT.md) for local Windows configuration, hosted TLS connections, Vercel variables, and the separate extraction worker.
+
+The API includes `api/index.py` and `vercel.json` for Vercel. MySQL is supported through PyMySQL, using `DATABASE_URL`/`MYSQL_URL` or individual `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`, `MYSQL_USER`, and `MYSQL_PASSWORD` settings. Local `.env` files load automatically.
+
+Use `OBJECT_STORE_BACKEND=database` to persist small source files in `stored_objects`, accessible to both the API and worker. This is the Vercel default when a non-SQLite database is configured. Local filesystem storage remains the local default; `/tmp` storage and SQLite on Vercel remain ephemeral. Existing files are not automatically migrated.
+
+The health route probes its dependencies and returns HTTP 503 when unavailable. Database connection/schema initialization failures on Vercel are reported without hiding the web interface. The worker remains a separate process; a Vercel deployment alone does not process queued jobs.
 
 ## API contract
 

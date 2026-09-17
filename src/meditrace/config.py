@@ -21,6 +21,7 @@ class Settings:
     mysql_ssl: bool = False
     mysql_ssl_ca: str | None = None
     serverless: bool = False
+    allowed_origins: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -76,6 +77,11 @@ class Settings:
             model_name=os.getenv("MODEL_NAME", cls.model_name),
             auto_process=os.getenv("AUTO_PROCESS", "false").lower()
             in {"1", "true", "yes"},
+            allowed_origins=tuple(
+                origin.strip()
+                for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
+                if origin.strip()
+            ),
         )
 
 

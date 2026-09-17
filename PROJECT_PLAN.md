@@ -41,32 +41,37 @@ This checklist turns the product roadmap into repository-sized increments. A che
 
 ## Phase 4 — Trends and contradictions
 
-- [ ] Versioned threshold table for a small, reviewed set of common lab trends.
-- [ ] Candidate grouping followed by deterministic conflict checks.
-- [ ] Medication-dose and allergy contradiction rules.
-- [ ] Flag cards cite both sources and never auto-resolve a conflict.
+- [x] Versioned threshold table for a small, reviewed set of common lab trends. (`analysis.TREND_THRESHOLDS`, `TREND_THRESHOLD_VERSION`)
+- [x] Candidate grouping followed by deterministic conflict checks. (`analysis.detect_contradictions`)
+- [x] Medication-dose contradiction rules. Allergy contradiction rules are **not implemented** — there is no allergy fact type in the extraction pipeline yet.
+- [x] Flag cards cite both sources and never auto-resolve a conflict. (`GET /api/patients/{id}/flags`, always returns both/all conflicting fact IDs)
+
+**Gate status:** met for the implemented rules; not yet hand-checked against a reviewed evaluation set.
 
 ## Phase 5 — Evidence-grounded Q&A (v1 gate)
 
-- [ ] Retrieve from structured facts, not unbounded raw prose.
-- [ ] Require fact IDs for every generated claim.
-- [ ] Deterministic verification/suppression pass with “not enough evidence” fallback.
-- [ ] Fixed 15–20 question evaluation set in CI.
+- [x] Retrieve from structured facts, not unbounded raw prose. (`qa.retrieve`, keyword-overlap over Fact columns only)
+- [x] Require fact IDs for every generated claim. (`cited_fact_ids`, always a subset of retrieved fact IDs)
+- [x] Deterministic verification/suppression pass with “not enough evidence” fallback. (a model's citations are dropped unless they match retrieved fact IDs; empty retrieval short-circuits before any model call)
+- [ ] Fixed 15–20 question evaluation set in CI. **Not implemented** — `tests/test_qa.py` covers unit behavior, not a reviewed evaluation rubric.
+
+**Gate status:** the mechanism is real and tested; the v1 gate's evaluation-set requirement is still open.
 
 ## Phase 6 — Chest X-ray module (v1.5)
 
-- [ ] CXR Foundation embedding adapter and separately evaluated classifier head.
-- [ ] MedGemma vision adapter with model/version provenance.
-- [ ] Imaging facts use the same evidence and timeline contracts.
-- [ ] No CT, MRI, pathology, dermatology, or retinal claims in this phase.
+- [ ] CXR Foundation embedding adapter and separately evaluated classifier head. **Not implemented** — `imaging.py` wires the existing DenseNet121 classifier (`src/model.py`), not a CXR Foundation embedding adapter.
+- [ ] MedGemma vision adapter. **Not implemented.** Model/version provenance (checkpoint filename + SHA-256) is recorded for the DenseNet path that does exist.
+- [x] Imaging facts use the same evidence and timeline contracts. (`POST /api/documents/{id}/cxr-analyze` persists a `Fact` with `fact_type="imaging"`, appears in the same timeline as text-derived facts)
+- [x] No CT, MRI, pathology, dermatology, or retinal claims in this phase. (media-type check restricts input to PNG/JPEG; response always carries the disclaimer)
+- **No pretrained checkpoint ships with this repo.** The endpoint returns 503 until `CXR_MODEL_PATH` points at a checkpoint you train with `notebooks/CXR_Sentinel_Full.ipynb` against real, license-compliant data.
 
 ## Phases 7–9 — Optional differentiation and packaging
 
-- [ ] Relational fact graph only when a demonstrated query requires it.
-- [ ] Static, visible document reliability tiers.
-- [ ] Append-only query, answer, view, evidence, outcome, and model-version audit events.
-- [ ] Consistent confidence and insufficient-evidence displays.
-- [ ] Three-minute walkthrough using conflicting synthetic sources only.
+- [ ] Relational fact graph only when a demonstrated query requires it. Not needed yet.
+- [x] Static, visible document reliability tiers. (`analysis.reliability_tier`, shown in the timeline UI)
+- [x] Append-only audit events for document/fact reads and writes, logins, timeline/flags/ask views, and CXR analysis. (`audit_events`, `GET /api/audit`, admin-only, no update/delete route exists). Not yet broken out into the exact query/answer/view/evidence/outcome/model-version taxonomy this line originally specified.
+- [x] Consistent confidence and insufficient-evidence displays. (fact `confidence` + `reliability_tier` throughout; `AskResponse.insufficient_evidence` surfaced in the UI)
+- [ ] Three-minute walkthrough using conflicting synthetic sources only. **Not implemented.**
 
 ## Non-negotiable release rules
 

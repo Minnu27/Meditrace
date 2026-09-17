@@ -80,6 +80,8 @@ def test_mysql_schema_compiles():
 def setup_app(monkeypatch, url):
     monkeypatch.setenv("DATABASE_URL", url)
     monkeypatch.setenv("OBJECT_STORE_BACKEND", "database")
+    monkeypatch.setenv("ENCRYPTION_KEY", "kX8f1QhZ2sYbYQxvV3v4qz5rN0jz3sVfE9pJcRZmA0g=")
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-at-least-32-bytes-long!!")
     get_settings.cache_clear()
     import src.meditrace.database as database
 
@@ -89,19 +91,38 @@ def setup_app(monkeypatch, url):
     return importlib.reload(api)
 
 
+def auth_headers(client: TestClient, role: str = "clinician") -> dict[str, str]:
+    from src.meditrace.auth import create_user
+    from src.meditrace.database import SessionLocal, create_schema
+
+    create_schema()
+    email = f"{role}@example.test"
+    with SessionLocal() as session:
+        create_user(session, email, "correct horse battery staple", role)
+    response = client.post(
+        "/api/auth/login", json={"email": email, "password": "correct horse battery staple"}
+    )
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
 def test_persistent_upload_worker_and_failure_health(monkeypatch, tmp_path):
     api = setup_app(monkeypatch, f'sqlite:///{tmp_path / "shared.db"}')
     with TestClient(api.app) as client:
         assert client.get("/api/health").status_code == 200
+        headers = auth_headers(client)
         content = b"Laboratory report\nHbA1c 7.2 % high"
         upload = client.post(
             "/api/documents",
             data={"patient_id": "SYN-1"},
             files={"file": ("lab.txt", content, "text/plain")},
+            headers=headers,
         )
         assert upload.status_code == 201
         document = upload.json()
-        job = client.post(f'/api/documents/{document["id"]}/extract').json()
+        job = client.post(
+            f'/api/documents/{document["id"]}/extract', headers=headers
+        ).json()
 
     # A fresh API instance and separate worker use only the shared database.
     api = setup_app(monkeypatch, f'sqlite:///{tmp_path / "shared.db"}')
@@ -110,9 +131,18 @@ def test_persistent_upload_worker_and_failure_health(monkeypatch, tmp_path):
     worker = importlib.reload(worker)
     assert worker.process_one()
     with TestClient(api.app) as client:
-        assert client.get(f'/api/documents/{document["id"]}/content').content == content
-        assert client.get(f'/api/jobs/{job["id"]}').json()["status"] == "completed"
-        assert client.get("/api/patients/SYN-1/timeline").json()["total"] > 0
+        # Same JWT SECRET_KEY and shared DB: the token from the first client still works.
+        assert (
+            client.get(f'/api/documents/{document["id"]}/content', headers=headers).content
+            == content
+        )
+        assert (
+            client.get(f'/api/jobs/{job["id"]}', headers=headers).json()["status"]
+            == "completed"
+        )
+        assert (
+            client.get("/api/patients/SYN-1/timeline", headers=headers).json()["total"] > 0
+        )
 
         def fail():
             raise OSError("private connection details")
@@ -148,6 +178,7 @@ def test_live_mysql_upload_worker(monkeypatch):
     api = setup_app(monkeypatch, url)
     with TestClient(api.app) as client:
         assert client.get("/api/health").status_code == 200
+        headers = auth_headers(client)
         upload = client.post(
             "/api/documents",
             data={"patient_id": "SYN-MYSQL"},
@@ -158,19 +189,25 @@ def test_live_mysql_upload_worker(monkeypatch):
                     "text/plain",
                 )
             },
+            headers=headers,
         )
         assert upload.status_code == 201, upload.text
         doc = upload.json()
-        queued = client.post(f'/api/documents/{doc["id"]}/extract')
+        queued = client.post(f'/api/documents/{doc["id"]}/extract', headers=headers)
         assert queued.status_code == 202
         import src.meditrace.worker as worker
 
         worker = importlib.reload(worker)
         assert worker.process_one()
         assert (
-            client.get(f'/api/jobs/{queued.json()["id"]}').json()["status"]
+            client.get(f'/api/jobs/{queued.json()["id"]}', headers=headers).json()["status"]
             == "completed"
         )
-        assert client.get(f'/api/documents/{doc["id"]}/content').status_code == 200
-        assert client.get("/api/patients/SYN-MYSQL/timeline").json()["total"] > 0
+        assert (
+            client.get(f'/api/documents/{doc["id"]}/content', headers=headers).status_code
+            == 200
+        )
+        assert (
+            client.get("/api/patients/SYN-MYSQL/timeline", headers=headers).json()["total"] > 0
+        )
     get_settings.cache_clear()

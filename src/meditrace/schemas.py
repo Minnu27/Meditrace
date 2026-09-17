@@ -85,6 +85,7 @@ class HealthRead(BaseModel):
     database: str
     object_store: str
     model: str
+    security: str
 
 
 class ExtractionJobRead(BaseModel):
@@ -118,6 +119,7 @@ class TimelineEntry(BaseModel):
     source_filename: str
     evidence_location: EvidenceLocation
     confidence: float
+    reliability_tier: str = "low"
     details: dict = Field(default_factory=dict)
     prior_value: str | None = None
     numeric_delta: float | None = None
@@ -127,3 +129,79 @@ class TimelineRead(BaseModel):
     patient_id: str
     groups: dict[str, list[TimelineEntry]]
     total: int
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    role: str
+    expires_in_minutes: int
+
+
+class TrendFlagRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    test_or_finding: str
+    direction: str
+    magnitude: float
+    from_fact_id: UUID
+    to_fact_id: UUID
+    from_value: str
+    to_value: str
+    from_date: str
+    to_date: str
+
+
+class ContradictionFlagRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    kind: str
+    summary: str
+    fact_ids: list[UUID]
+
+
+class PatientFlagsRead(BaseModel):
+    patient_id: str
+    trends: list[TrendFlagRead]
+    contradictions: list[ContradictionFlagRead]
+
+
+class AskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+
+
+class AskResponse(BaseModel):
+    answer: str
+    cited_fact_ids: list[str]
+    evidence: list[dict]
+    confidence: float
+    insufficient_evidence: bool
+
+
+class CXRAnalysisRead(BaseModel):
+    document_id: UUID
+    findings: dict[str, float]
+    model_version: str
+    checkpoint_sha256: str
+    disclaimer: str = (
+        "Research prototype output on a chest X-ray only; not a diagnostic "
+        "device and not validated for CT, MRI, pathology, dermatology, or "
+        "retinal imaging."
+    )
+
+
+class AuditEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    occurred_at: datetime
+    user_email: str | None
+    role: str | None
+    action: str
+    resource_type: str
+    resource_id: str | None
+    patient_id: str | None
+    success: bool
+    detail: str | None

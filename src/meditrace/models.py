@@ -10,13 +10,11 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
-    JSON,
     String,
-    LargeBinary,
 )
-from sqlalchemy.dialects.mysql import LONGBLOB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from .crypto import EncryptedBinary, EncryptedJSON, EncryptedString
 from .schemas import DocumentStatus, DocumentType
 
 
@@ -28,7 +26,7 @@ class Document(Base):
     __tablename__ = "documents"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     patient_id: Mapped[str] = mapped_column(String(128), index=True)
-    filename: Mapped[str] = mapped_column(String(255))
+    filename: Mapped[str] = mapped_column(EncryptedString(1024))
     media_type: Mapped[str] = mapped_column(String(128))
     object_key: Mapped[str] = mapped_column(String(512), unique=True)
     size_bytes: Mapped[int] = mapped_column(Integer)
@@ -58,14 +56,14 @@ class Fact(Base):
     fact_type: Mapped[str] = mapped_column(String(64), index=True)
     test_or_finding: Mapped[str] = mapped_column(String(255), index=True)
     normalized_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    value: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    value: Mapped[str | None] = mapped_column(EncryptedString(2048), nullable=True)
     unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
     reference_range: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str | None] = mapped_column(String(64), nullable=True)
     observed_date: Mapped[date] = mapped_column(Date, index=True)
-    evidence_location: Mapped[dict] = mapped_column(JSON)
+    evidence_location: Mapped[dict] = mapped_column(EncryptedJSON(), default=dict)
     confidence: Mapped[float] = mapped_column(Float)
-    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    details: Mapped[dict] = mapped_column(EncryptedJSON(), default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -94,6 +92,40 @@ class StoredObject(Base):
 
     __tablename__ = "stored_objects"
     object_key: Mapped[str] = mapped_column(String(512), primary_key=True)
-    content: Mapped[bytes] = mapped_column(
-        LargeBinary().with_variant(LONGBLOB(), "mysql")
+    content: Mapped[bytes] = mapped_column(EncryptedBinary())
+
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(32))
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class AuditEvent(Base):
+    """Append-only access log. No update/delete route is exposed for this table."""
+
+    __tablename__ = "audit_events"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+    user_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    role: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    resource_type: Mapped[str] = mapped_column(String(64))
+    resource_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    patient_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    success: Mapped[bool] = mapped_column(default=True)
+    detail: Mapped[str | None] = mapped_column(String(500), nullable=True)

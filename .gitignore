@@ -10,6 +10,7 @@ data/
 !data/.gitkeep
 meditrace.db
 .env
+.meditrace_dev_key
 
 # Model artifacts
 checkpoints/

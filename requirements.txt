@@ -10,6 +10,8 @@ python-multipart
 pypdf>=5.0
 requests
 gradio
+PyJWT>=2.8
+cryptography>=42
 
 # dev tools (VS Code formatting)
 black

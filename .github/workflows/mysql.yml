@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install fastapi sqlalchemy 'PyMySQL[rsa]' 'psycopg[binary]' python-dotenv python-multipart pypdf pytest httpx
+      - run: python -m pip install fastapi sqlalchemy 'PyMySQL[rsa]' 'psycopg[binary]' python-dotenv python-multipart pypdf pytest httpx PyJWT cryptography
       - run: python -m pytest -q
         env:
           MYSQL_TEST_URL: mysql+pymysql://root:ci-only-password@127.0.0.1:3306/meditrace_test

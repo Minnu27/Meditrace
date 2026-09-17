@@ -15,5 +15,25 @@ services:
       timeout: 3s
       retries: 10
 
+  # Local-only MySQL matching the MYSQL_HOST=127.0.0.1 / MYSQL_PORT=3308
+  # defaults in .env.mysql.example. MYSQL_ROOT_PASSWORD is for this
+  # throwaway container only — never point a real deployment at a root
+  # account (see docs/MYSQL_DEPLOYMENT.md for creating a scoped app user).
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-meditrace-dev-root}
+      MYSQL_DATABASE: Meditrace
+    ports:
+      - "3308:3306"
+    volumes:
+      - meditrace-mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-meditrace-dev-root}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
 volumes:
   meditrace-postgres:
+  meditrace-mysql:

@@ -171,6 +171,37 @@ def deterministic_facts(
     return facts
 
 
+def call_openai_compatible_json(
+    endpoint: str,
+    model: str,
+    api_key: str | None,
+    system_prompt: str,
+    user_payload: dict,
+    timeout: int = 60,
+) -> dict:
+    """Calls any OpenAI-compatible chat completions gateway (incl. MedGemma) and
+    parses its JSON response body. Used by extraction and by the Q&A retrieval
+    verification pass; never sends raw document text unless the caller puts it
+    in ``user_payload`` explicitly."""
+    body = json.dumps(
+        {
+            "model": model,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(user_payload)},
+            ],
+        }
+    ).encode()
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    with urlopen(Request(endpoint, data=body, headers=headers), timeout=timeout) as response:
+        result = json.load(response)
+    content = result.get("choices", [{}])[0].get("message", {}).get("content", result)
+    return json.loads(content) if isinstance(content, str) else content
+
+
 class ModelProvider(Protocol):
     name: str
 
@@ -184,29 +215,11 @@ class HttpModelProvider:
         self.endpoint, self.name, self.api_key = endpoint, model, api_key
 
     def extract(self, payload: dict) -> list[dict]:
-        body = json.dumps(
-            {
-                "model": self.name,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "Extract only evidence-supported facts. Return JSON {facts: [...]} and retain evidence locations.",
-                    },
-                    {"role": "user", "content": json.dumps(payload)},
-                ],
-            }
-        ).encode()
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        with urlopen(
-            Request(self.endpoint, data=body, headers=headers), timeout=60
-        ) as response:
-            result = json.load(response)
-        content = (
-            result.get("choices", [{}])[0].get("message", {}).get("content", result)
+        content = call_openai_compatible_json(
+            self.endpoint,
+            self.name,
+            self.api_key,
+            "Extract only evidence-supported facts. Return JSON {facts: [...]} and retain evidence locations.",
+            payload,
         )
-        if isinstance(content, str):
-            content = json.loads(content)
         return content.get("facts", [])

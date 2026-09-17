@@ -13,9 +13,22 @@
   <div class="safety-banner"><span>RESEARCH USE ONLY</span> Decision-support prototype on synthetic/de-identified research data — not a diagnostic device.</div>
   <header>
     <a class="brand" href="/"><span class="brand-mark">M</span><span>MEDI<span>TRACE</span></span></a>
-    <nav><a class="active" href="#workspace">Workspace</a><a href="#documents">Documents</a><a href="#timeline">Timeline</a></nav>
-    <div class="system"><i></i> SYSTEM READY</div>
+    <nav><a class="active" href="#workspace">Workspace</a><a href="#documents">Documents</a><a href="#timeline">Timeline</a><a href="#flags">Flags</a><a href="#ask">Ask</a></nav>
+    <div class="session"><span id="session-user"></span><button type="button" id="logout-button" hidden>LOG OUT</button></div>
   </header>
+
+  <div id="login-overlay" class="login-overlay">
+    <form id="login-form" class="login-card">
+      <p class="eyebrow">AUTHENTICATION REQUIRED</p>
+      <h2>Sign in</h2>
+      <p class="lede">There is no public sign-up. An operator creates accounts with <code>python -m src.meditrace.create_user</code>.</p>
+      <label>Email<input name="email" type="email" required autocomplete="username"></label>
+      <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+      <button type="submit">SIGN IN <span>→</span></button>
+      <p class="form-status" id="login-status" role="status"></p>
+    </form>
+  </div>
+
   <main>
     <section class="hero" id="workspace">
       <div>
@@ -55,12 +68,28 @@
       <div id="timeline-list" class="timeline-list"><p class="empty">Enter a synthetic patient reference to review evidence-linked facts.</p></div>
     </section>
 
+    <section class="blueprint-card" id="flags">
+      <div class="card-heading"><div><p class="eyebrow">PHASE 04 / TRENDS &amp; CONTRADICTIONS</p><h2>Patient flags</h2></div></div>
+      <form id="flags-form" class="inline-form"><label>Patient reference<input name="patient_id" placeholder="e.g. SYN-1048" required maxlength="128"></label><button type="submit">LOAD FLAGS <span>→</span></button></form>
+      <div id="flags-list" class="timeline-list"><p class="empty">Deterministic trend and contradiction flags never resolve a conflict — every flag cites its source facts.</p></div>
+    </section>
+
+    <section class="blueprint-card" id="ask">
+      <div class="card-heading"><div><p class="eyebrow">PHASE 05 / EVIDENCE-GROUNDED Q&amp;A</p><h2>Ask about a patient</h2></div></div>
+      <form id="ask-form" class="ask-form">
+        <label>Patient reference<input name="patient_id" placeholder="e.g. SYN-1048" required maxlength="128"></label>
+        <label>Question<input name="question" placeholder="e.g. What was the most recent HbA1c?" required maxlength="500"></label>
+        <button type="submit">ASK <span>→</span></button>
+      </form>
+      <div id="ask-result" class="timeline-list"><p class="empty">Answers are built only from this patient's recorded facts and always cite fact IDs, or say there isn't enough evidence.</p></div>
+    </section>
+
     <section class="principles" id="evidence">
       <p class="eyebrow">SYSTEM CONTRACT / EVIDENCE FIRST</p>
       <div><article><b>01</b><h3>Immutable source</h3><p>Original files are retained with a SHA-256 fingerprint and stable source identifier.</p></article><article><b>02</b><h3>Location-aware facts</h3><p>Facts require a page and may include line ranges, exact quotes, and bounding boxes.</p></article><article><b>03</b><h3>Explicit uncertainty</h3><p>Every extracted fact carries confidence. Unsupported claims do not become answers.</p></article></div>
     </section>
   </main>
-  <footer><span>MEDITrace AI / PHASES 0—3</span><span>NO REAL PATIENT DATA</span></footer>
+  <footer><span>MEDITrace AI / PHASES 0—5 (+ optional Phase 6 imaging)</span><span>NO REAL PATIENT DATA</span></footer>
   <script src="/app.js"></script>
 </body>
 </html>

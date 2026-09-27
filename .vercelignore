@@ -1,0 +1,19 @@
+# Never upload local secrets or data with `vercel` CLI deploys.
+.env
+.env.*
+!.env.example
+!.env.mysql.example
+.meditrace_dev_key
+*.db
+data/
+checkpoints/
+reports/
+*.pt
+*.pth
+
+# Not needed by the serverless API; keeps the function bundle small.
+notebooks/
+tests/
+.venv/
+venv/
+.vscode/

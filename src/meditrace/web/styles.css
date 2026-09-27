@@ -21,3 +21,4 @@
 .login-card button{margin-top:20px;width:100%;border:0;background:var(--blue);color:#fff;padding:13px;font:600 12px 'Barlow Condensed';letter-spacing:.14em;display:flex;justify-content:space-between;cursor:pointer}
 .login-card code{background:#eef2f1;padding:1px 5px;font-size:12px}
 @media(max-width:800px){.ask-form{grid-template-columns:1fr}}
+@media(max-width:600px){header{height:64px;padding:0 16px}.session{font-size:11px;display:flex;gap:8px;align-items:center}main{padding:0 16px}.blueprint-card{padding:20px 16px}.inline-form,.ask-form{grid-template-columns:1fr}.time-group{grid-template-columns:1fr;gap:8px}.time-group article{grid-template-columns:1fr auto}.document{grid-template-columns:36px 1fr}.doc-actions{grid-column:1/-1;display:flex;gap:8px}.empty{padding:40px 12px}.hero{padding:36px 0}.hero h1{font-size:44px}footer{flex-direction:column;gap:6px;padding:16px}}

@@ -100,6 +100,26 @@ Interactive API documentation is available at `/docs`. Every route below except 
 | `POST` | `/api/documents/{id}/cxr-analyze` | **write** — Chest X-ray inference; 503 until `CXR_MODEL_PATH` is configured (Phase 6) |
 | `GET` | `/api/audit` | **admin only** — Append-only access log |
 
+## Install as an app
+
+The web UI is an installable Progressive Web App (`web/manifest.json`,
+`web/sw.js`, icons in `web/icons/`). Once deployed to Vercel over HTTPS:
+
+- **Android / Chrome / Edge**: open the site and choose *Install app* (or
+  *Add to Home screen*).
+- **iPhone / iPad**: open it in Safari → Share → *Add to Home Screen*.
+
+It then opens full-screen with its own icon. Only the static UI shell is
+cached on the device; patient data is always fetched live with the signed-in
+token and never cached.
+
+For a store-published native app later, wrap this same deployed site with
+[Capacitor](https://capacitorjs.com/) (Android/iOS projects that load the
+Vercel URL) or build a React Native/Flutter client against the same
+`/api/*` endpoints. If the native app serves its UI from a different origin
+(e.g. `capacitor://localhost`), add that origin to `ALLOWED_ORIGINS` on
+Vercel; no backend change is needed otherwise.
+
 ## Connect your database and model
 
 Set `DATABASE_URL` to a SQLAlchemy Postgres URL. The `postgresql://` form is normalized to the installed psycopg driver. Use a dedicated, access-controlled database and environment secrets, never committed credentials. Set `MODEL_ENDPOINT`, `MODEL_API_KEY`, and `MODEL_NAME` for an OpenAI-compatible gateway. No source is sent automatically: submission is an explicit per-document operation.

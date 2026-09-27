@@ -183,3 +183,56 @@ def test_extraction_queue_and_deterministic_timeline(tmp_path):
         ).json()
         assert answer["cited_fact_ids"]
         assert not answer["insufficient_evidence"]
+
+
+def test_api_responses_are_not_cacheable_and_app_shell_is_installable(tmp_path):
+    with build_client(tmp_path) as client:
+        headers = auth_headers(client)
+        response = client.get("/api/documents", headers=headers)
+        assert response.headers["Cache-Control"] == "no-store"
+        assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+        assert client.get("/manifest.json").json()["display"] == "standalone"
+        assert "/api/" in client.get("/sw.js").text
+        assert "no-store" not in client.get("/app.js").headers.get("Cache-Control", "")
+
+
+def test_sensitive_columns_are_ciphertext_in_the_database(tmp_path, capsys):
+    from sqlalchemy import text
+
+    with build_client(tmp_path) as client:
+        headers = auth_headers(client)
+        document = client.post(
+            "/api/documents",
+            data={"patient_id": "SYN-9"},
+            files={"file": ("secret-name.txt", b"HbA1c 8.1 %", "text/plain")},
+            headers=headers,
+        ).json()
+        client.post(
+            f"/api/documents/{document['id']}/facts",
+            json={
+                "patient_id": "SYN-9",
+                "fact_type": "lab",
+                "test_or_finding": "HbA1c",
+                "value": "8.1",
+                "unit": "%",
+                "observed_date": "2026-03-01",
+                "evidence_location": {"page": 1, "quote": "HbA1c 8.1 %"},
+                "confidence": 0.9,
+            },
+            headers=headers,
+        )
+        from src.meditrace.database import engine
+
+        with engine.connect() as connection:
+            filename = connection.execute(text("SELECT filename FROM documents")).scalar()
+            value = connection.execute(text("SELECT value FROM facts")).scalar()
+        assert b"secret-name" not in bytes(filename)
+        assert b"8.1" not in bytes(value)
+
+        import sys
+        from src.meditrace import show_records
+
+        sys.argv = ["show_records", "--patient", "SYN-9"]
+        show_records.main()
+        printed = capsys.readouterr().out
+        assert "secret-name.txt" in printed and "8.1" in printed

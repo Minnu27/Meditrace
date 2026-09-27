@@ -44,14 +44,19 @@ function updateSessionChrome() {
   sessionUser.textContent = authenticated ? `${session.email} · ${session.role.toUpperCase()}` : '';
 }
 
+function signOut() {
+  session.clear();
+  // Wipe anything patient-related that was rendered for the previous user.
+  [list, timelineList, flagsList, askResult].forEach(el => { el.innerHTML = '<p class="empty">Signed out.</p>'; });
+  count.textContent = '000';
+  updateSessionChrome();
+}
+
 async function authFetch(path, options = {}) {
   const headers = new Headers(options.headers || {});
   if (session.token) headers.set('Authorization', `Bearer ${session.token}`);
   const response = await fetch(path, {...options, headers});
-  if (response.status === 401) {
-    session.clear();
-    updateSessionChrome();
-  }
+  if (response.status === 401) signOut();
   return response;
 }
 
@@ -77,7 +82,7 @@ loginForm.addEventListener('submit', async event => {
   }
 });
 
-logoutButton.addEventListener('click', () => { session.clear(); updateSessionChrome(); });
+logoutButton.addEventListener('click', signOut);
 
 async function loadDocuments() {
   if (!session.token) return;
@@ -130,7 +135,21 @@ timelineForm.addEventListener('submit', async event => {
   const response = await authFetch(`/api/patients/${encodeURIComponent(patient)}/timeline`);
   const data = await response.json();
   if (!response.ok) { timelineList.innerHTML = `<p class="empty">${escapeHtml(data.detail || 'Timeline unavailable')}</p>`; return; }
-  timelineList.innerHTML = data.total ? Object.entries(data.groups).map(([period, entries]) => `<section class="time-group"><h3>${escapeHtml(period)}</h3><div>${entries.map(item => `<article><div><b>${escapeHtml(item.test_or_finding)}</b><span>${escapeHtml(item.fact_type)} · <em class="tier tier-${escapeHtml(item.reliability_tier)}">${escapeHtml(item.reliability_tier)}</em></span></div><strong>${escapeHtml(item.value || 'Documented')} ${escapeHtml(item.unit || '')}</strong>${item.numeric_delta !== null ? `<small>Δ ${item.numeric_delta > 0 ? '+' : ''}${item.numeric_delta}</small>` : ''}<a href="/api/documents/${item.source_document_id}/content" target="_blank">${escapeHtml(item.source_filename)} · evidence p.${item.evidence_location.page}</a></article>`).join('')}</div></section>`).join('') : '<p class="empty">No evidence facts found for this patient.</p>';
+  timelineList.innerHTML = data.total ? Object.entries(data.groups).map(([period, entries]) => `<section class="time-group"><h3>${escapeHtml(period)}</h3><div>${entries.map(item => `<article><div><b>${escapeHtml(item.test_or_finding)}</b><span>${escapeHtml(item.fact_type)} · <em class="tier tier-${escapeHtml(item.reliability_tier)}">${escapeHtml(item.reliability_tier)}</em></span></div><strong>${escapeHtml(item.value || 'Documented')} ${escapeHtml(item.unit || '')}</strong>${item.numeric_delta !== null ? `<small>Δ ${item.numeric_delta > 0 ? '+' : ''}${item.numeric_delta}</small>` : ''}<a href="#" class="evidence-link" data-id="${escapeHtml(item.source_document_id)}">${escapeHtml(item.source_filename)} · evidence p.${item.evidence_location.page}</a></article>`).join('')}</div></section>`).join('') : '<p class="empty">No evidence facts found for this patient.</p>';
+});
+
+// Source documents need the bearer token, so a plain link would always get
+// 401. Fetch with auth and open the bytes as a short-lived local blob URL.
+timelineList.addEventListener('click', async event => {
+  const link = event.target.closest('.evidence-link');
+  if (!link) return;
+  event.preventDefault();
+  const viewer = window.open('', '_blank');
+  const response = await authFetch(`/api/documents/${encodeURIComponent(link.dataset.id)}/content`);
+  if (!response.ok) { viewer?.close(); link.textContent = 'Source unavailable'; return; }
+  const url = URL.createObjectURL(await response.blob());
+  if (viewer) viewer.location = url; else window.location = url;
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 });
 
 flagsForm.addEventListener('submit', async event => {
@@ -162,3 +181,7 @@ askForm.addEventListener('submit', async event => {
 
 updateSessionChrome();
 loadDocuments();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}

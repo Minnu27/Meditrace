@@ -100,8 +100,15 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
+        "default-src 'self'; img-src 'self' data: blob:; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; frame-src blob:; "
+        "object-src 'none'; base-uri 'none'; form-action 'self'; "
+        "frame-ancestors 'none'"
     )
+    if request.url.path.startswith("/api/"):
+        # Patient data must never sit in a browser, proxy or CDN cache.
+        response.headers["Cache-Control"] = "no-store"
     if request.url.scheme == "https":
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
@@ -296,7 +303,12 @@ def submit_to_model(
         session.commit()
     except Exception as exc:
         session.rollback()
-        raise HTTPException(502, f"Model submission failed: {exc}") from exc
+        # The exception text can carry the gateway URL or source text; keep it
+        # out of the response and the logs.
+        logging.getLogger(__name__).error(
+            "Model submission failed (%s)", type(exc).__name__
+        )
+        raise HTTPException(502, "Model submission failed") from exc
     audit.record(
         session,
         user_email=user.email,
@@ -517,7 +529,8 @@ def ask_patient_question(
         action="ask_question",
         resource_type="patient",
         patient_id=patient_id,
-        detail=payload.question[:200],
+        # Questions can contain identifying free text, so only its size is logged.
+        detail=f"question of {len(payload.question)} characters",
     )
     return AskResponse(
         answer=result.answer,

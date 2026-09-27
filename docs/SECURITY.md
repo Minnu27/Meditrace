@@ -57,6 +57,13 @@ What "strong practical security" means concretely:
    `Referrer-Policy: no-referrer` are set both by FastAPI middleware and by
    `vercel.json` (belt and suspenders across the two ways Vercel can serve
    this app).
+   Every `/api/*` response also carries `Cache-Control: no-store`, so patient
+   data is never kept in a browser, proxy, or CDN cache. The installable-app
+   service worker (`web/sw.js`) caches only the static UI shell and never
+   intercepts `/api/*`, and signing out clears every rendered patient panel.
+   Error responses and logs never include exception text (which can carry
+   connection strings, gateway URLs, or source text), and the audit log
+   records the length of Q&A questions rather than their free text.
 8. **CORS**: closed by default. Set `ALLOWED_ORIGINS` (comma-separated) only
    if a separate frontend origin needs to call this API directly.
 

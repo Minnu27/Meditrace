@@ -4,6 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>MediTrace AI — Evidence workspace</title>
+  <meta name="theme-color" content="#102532">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="MediTrace">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
@@ -49,7 +56,7 @@
         <div class="card-heading"><div><p class="eyebrow">INGEST / DOCUMENT</p><h2>Add source material</h2></div><span class="step">01</span></div>
         <form id="upload-form">
           <label>Patient reference<input name="patient_id" placeholder="e.g. SYN-1048" required maxlength="128"></label>
-          <label class="dropzone" for="file"><span class="upload-icon">↑</span><strong>DROP A SOURCE DOCUMENT</strong><small>PDF, PNG, JPG, TXT OR CSV · MAX 20 MB</small><input id="file" name="file" type="file" required accept=".pdf,.png,.jpg,.jpeg,.txt,.csv"></label>
+          <label class="dropzone" for="file"><span class="upload-icon">↑</span><strong>DROP A SOURCE DOCUMENT</strong><small>PDF, PNG, JPG, TXT OR CSV · MAX 4 MB</small><input id="file" name="file" type="file" required accept=".pdf,.png,.jpg,.jpeg,.txt,.csv"></label>
           <div class="file-name" id="file-name">No source selected</div>
           <button type="submit">INGEST DOCUMENT <span>→</span></button>
           <p class="form-status" id="form-status" role="status"></p>

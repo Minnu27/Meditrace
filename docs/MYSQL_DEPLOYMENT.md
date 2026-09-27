@@ -55,6 +55,45 @@ If you already run MySQL natively (e.g. via MySQL Workbench on Windows) instead 
 2. Use an application database account with access to this database (see step 5 above); do not use a public root account for anything beyond your own single-user machine.
 3. Follow steps 2–10 above, using the host/port your local server actually listens on (Workbench shows this — commonly 3306, or 3308 if something else already used 3306).
 
+## Seeing your data in MySQL Workbench
+
+Connect Workbench to the same host/port/user as your `.env` (for the Docker
+setup: `127.0.0.1`, port `3308`, user `root`) and open the `Meditrace`
+schema. The app creates these tables:
+
+| Table | What you see in Workbench |
+| --- | --- |
+| `documents` | One row per upload: `patient_id`, `media_type`, `status`, `size_bytes`, `sha256`, `created_at` in plain text. `filename` is ciphertext. |
+| `facts` | One row per evidence fact: `patient_id`, `fact_type`, `test_or_finding`, `unit`, `reference_range`, `status`, `observed_date`, `confidence` in plain text. `value`, `details`, `evidence_location` are ciphertext. |
+| `stored_objects` | The uploaded file bytes (ciphertext) when `OBJECT_STORE_BACKEND=database`. |
+| `extraction_jobs` | Queued/completed extraction work. |
+| `users` | Accounts: `email`, `role`, lockout state. Passwords are PBKDF2 hashes, never the password. |
+| `audit_events` | Who logged in, uploaded, or viewed which patient, and when. |
+
+Example queries:
+
+```sql
+USE Meditrace;
+SELECT patient_id, media_type, status, size_bytes, created_at FROM documents ORDER BY created_at DESC;
+SELECT patient_id, observed_date, test_or_finding, unit, status FROM facts ORDER BY observed_date;
+SELECT occurred_at, user_email, action, patient_id FROM audit_events ORDER BY occurred_at DESC;
+```
+
+The ciphertext columns (values starting `gAAAAA…`) are deliberate: they are
+the leakage protection. Anyone who gets a database dump, a backup, a
+Workbench screenshot, or read access to the database still cannot read test
+values, filenames, quotes, or the documents themselves without
+`ENCRYPTION_KEY`. MySQL cannot decrypt them in SQL. To read the full,
+decrypted records as the operator, run this with the same `.env`:
+
+```bash
+python -m src.meditrace.show_records                    # all patients
+python -m src.meditrace.show_records --patient SYN-1048 # one patient
+```
+
+or use the web app's timeline. Keep `ENCRYPTION_KEY` safe and backed up:
+if it is lost, the encrypted columns cannot be recovered.
+
 ## Vercel configuration
 
 Deploy the updated branch or merge the PR to the production branch. Use the repository root, existing vercel.json, preset Other, and no custom build/output/install overrides. Do not set a Uvicorn start command on Vercel.

@@ -56,7 +56,7 @@
         <div class="card-heading"><div><p class="eyebrow">INGEST / DOCUMENT</p><h2>Add source material</h2></div><span class="step">01</span></div>
         <form id="upload-form">
           <label>Patient reference<input name="patient_id" placeholder="e.g. SYN-1048" required maxlength="128"></label>
-          <label class="dropzone" for="file"><span class="upload-icon">↑</span><strong>DROP A SOURCE DOCUMENT</strong><small>PDF, PNG, JPG, TXT OR CSV · MAX 4 MB</small><input id="file" name="file" type="file" required accept=".pdf,.png,.jpg,.jpeg,.txt,.csv"></label>
+          <label class="dropzone" for="file"><span class="upload-icon">↑</span><strong>DROP A SOURCE DOCUMENT</strong><small>PDF, PHOTO, TXT OR CSV · LARGE PHOTOS ARE RESIZED</small><input id="file" name="file" type="file" required accept="image/*,.pdf,.png,.jpg,.jpeg,.heic,.webp,.txt,.csv"></label>
           <div class="file-name" id="file-name">No source selected</div>
           <button type="submit">INGEST DOCUMENT <span>→</span></button>
           <p class="form-status" id="form-status" role="status"></p>

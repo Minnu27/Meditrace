@@ -117,15 +117,63 @@ list.addEventListener('click', async event => {
   event.target.textContent = response.ok ? 'QUEUED' : (data.detail || 'FAILED');
   event.target.disabled = response.ok;
 });
+// Updated from /api/health. Vercel rejects request bodies over ~4.5 MB before
+// they reach the app, so the default matches the Vercel limit.
+let maxUploadBytes = 4000000;
+const DIRECT_IMAGE_TYPES = ['image/png', 'image/jpeg'];
+const MAX_IMAGE_SIDE = 2400;
+
+// Phone photos are often 5–12 MB or HEIC/WebP. Re-encode any image that is
+// too big or not PNG/JPEG as a JPEG that fits the limit. Returns the original
+// file when it can be sent as is, or null if the browser cannot decode it.
+async function prepareImage(file) {
+  if (!file.type.startsWith('image/') && !/\.(heic|heif|webp|gif|bmp)$/i.test(file.name)) return file;
+  if (DIRECT_IMAGE_TYPES.includes(file.type) && file.size <= maxUploadBytes) return file;
+  let bitmap;
+  try { bitmap = await createImageBitmap(file); } catch { return null; }
+  let scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
+  let blob = null;
+  // Try a few quality levels, then shrink the image further, until it fits.
+  for (let attempt = 0; attempt < 5; attempt++, scale *= 0.7) {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    for (const quality of [0.88, 0.75, 0.6]) {
+      blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+      if (blob && blob.size <= maxUploadBytes) break;
+    }
+    if (blob && blob.size <= maxUploadBytes) break;
+  }
+  if (!blob) return null;
+  return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', {type: 'image/jpeg'});
+}
+
+async function readError(response) {
+  // Vercel's own "payload too large" and gateway errors are not JSON.
+  if (response.status === 413) return `File is too large (max ${(maxUploadBytes / 1e6).toFixed(0)} MB).`;
+  try { return (await response.json()).detail || `Upload failed (${response.status})`; }
+  catch { return `Upload failed (${response.status} ${response.statusText})`; }
+}
+
 form.addEventListener('submit', async event => {
   event.preventDefault();
   const button = form.querySelector('button');
   button.disabled = true;
-  statusLine.textContent = 'Securing source document…';
+  statusLine.textContent = 'Preparing document…';
   try {
-    const response = await authFetch('/api/documents', {method: 'POST', body: new FormData(form)});
+    const original = fileInput.files[0];
+    if (!original) throw new Error('Choose a file first.');
+    const file = await prepareImage(original);
+    if (!file) throw new Error('This image format cannot be read by your browser. Save it as JPG or PNG and try again.');
+    if (file.size > maxUploadBytes) throw new Error(`File is ${(file.size / 1e6).toFixed(1)} MB; the limit is ${(maxUploadBytes / 1e6).toFixed(0)} MB.`);
+    const body = new FormData();
+    body.append('patient_id', new FormData(form).get('patient_id'));
+    body.append('file', file, file.name);
+    statusLine.textContent = 'Uploading…';
+    const response = await authFetch('/api/documents', {method: 'POST', body});
+    if (!response.ok) throw new Error(await readError(response));
     const result = await response.json();
-    if (!response.ok) throw new Error(result.detail || 'Upload failed');
     statusLine.textContent = `Source registered as ${result.id.slice(0, 8)}.`;
     form.reset(); document.querySelector('#file-name').textContent = 'No source selected';
     await loadDocuments();
@@ -187,6 +235,7 @@ askForm.addEventListener('submit', async event => {
   try {
     const health = await (await fetch('/api/health')).json();
     loginRequired = health.login_required === true;
+    if (health.max_upload_bytes) maxUploadBytes = health.max_upload_bytes;
   } catch { /* server unreachable: loadDocuments shows the error */ }
   updateSessionChrome();
   loadDocuments();

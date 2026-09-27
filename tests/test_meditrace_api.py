@@ -253,3 +253,31 @@ def test_without_require_login_the_api_is_open(tmp_path):
             assert client.get("/api/documents").json()["total"] == 1
         finally:
             os.environ["REQUIRE_LOGIN"] = "true"
+
+
+def test_upload_accepts_browser_and_os_media_type_variants(tmp_path):
+    with build_client(tmp_path) as client:
+        headers = auth_headers(client)
+        cases = [
+            ("results.csv", "application/vnd.ms-excel", "text/csv"),
+            ("scan.jpg", "image/jpg", "image/jpeg"),
+            ("report.pdf", "application/octet-stream", "application/pdf"),
+            ("photo.JPEG", "", "image/jpeg"),
+        ]
+        for name, sent, stored in cases:
+            response = client.post(
+                "/api/documents",
+                data={"patient_id": "SYN-1"},
+                files={"file": (name, b"x", sent)},
+                headers=headers,
+            )
+            assert response.status_code == 201, (name, response.text)
+            assert response.json()["media_type"] == stored
+        too_big = client.post(
+            "/api/documents",
+            data={"patient_id": "SYN-1"},
+            files={"file": ("a.txt", b"x" * 25_000_000, "text/plain")},
+            headers=headers,
+        )
+        assert too_big.status_code == 413
+        assert "MB upload limit" in too_big.json()["detail"]

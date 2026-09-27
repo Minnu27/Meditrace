@@ -58,6 +58,34 @@ ALLOWED_MEDIA_TYPES = {
     "text/plain",
     "text/csv",
 }
+# Browsers and operating systems label the same file differently (Windows
+# reports CSV as an Excel type, some phones send "image/jpg" or no type at
+# all), so map aliases and fall back to the file extension.
+MEDIA_TYPE_ALIASES = {
+    "image/jpg": "image/jpeg",
+    "image/pjpeg": "image/jpeg",
+    "application/csv": "text/csv",
+    "application/vnd.ms-excel": "text/csv",
+    "application/x-pdf": "application/pdf",
+}
+EXTENSION_MEDIA_TYPES = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".txt": "text/plain",
+    ".csv": "text/csv",
+}
+
+
+def normalize_media_type(content_type: str | None, filename: str) -> str:
+    media_type = (content_type or "").split(";")[0].strip().lower()
+    media_type = MEDIA_TYPE_ALIASES.get(media_type, media_type)
+    if media_type in ALLOWED_MEDIA_TYPES:
+        return media_type
+    return EXTENSION_MEDIA_TYPES.get(Path(filename).suffix.lower(), media_type or "unknown")
+
+
 settings = get_settings()
 store = build_object_store(settings)
 
@@ -142,6 +170,7 @@ def health(response: Response) -> HealthRead:
     if not ok:
         response.status_code = 503
     return HealthRead(
+        max_upload_bytes=settings.max_upload_bytes,
         status="ok" if ok else "degraded",
         database=database_status,
         object_store=storage_status,
@@ -188,14 +217,20 @@ async def upload_document(
     session: Session = Depends(get_session),
     user: CurrentUser = Depends(require_write_access),
 ) -> Document:
-    media_type = file.content_type or "application/octet-stream"
+    media_type = normalize_media_type(file.content_type, file.filename or "")
     if media_type not in ALLOWED_MEDIA_TYPES:
-        raise HTTPException(415, f"Unsupported media type: {media_type}")
+        raise HTTPException(
+            415,
+            f"Unsupported file type ({media_type}). Upload a PDF, PNG, JPG, TXT or CSV file.",
+        )
     content = await file.read(settings.max_upload_bytes + 1)
     if not content:
         raise HTTPException(400, "The uploaded document is empty")
     if len(content) > settings.max_upload_bytes:
-        raise HTTPException(413, "Document exceeds the upload limit")
+        raise HTTPException(
+            413,
+            f"File is larger than the {settings.max_upload_bytes // 1_000_000} MB upload limit",
+        )
 
     document_id = uuid.uuid4()
     safe_name = Path(file.filename or "document").name

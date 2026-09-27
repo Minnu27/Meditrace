@@ -87,6 +87,7 @@ class HealthRead(BaseModel):
     model: str
     security: str
     login_required: bool = True
+    max_upload_bytes: int = 4_000_000
 
 
 class ExtractionJobRead(BaseModel):

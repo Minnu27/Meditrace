@@ -33,6 +33,15 @@ ROLES = {ROLE_ADMIN, ROLE_CLINICIAN, ROLE_REVIEWER}
 
 _bearer = HTTPBearer(auto_error=False)
 
+# Login is off unless REQUIRE_LOGIN=true. With it off, every request acts as
+# this admin account, so anyone who can reach the site can read and write all
+# patient data.
+OPEN_ACCESS_EMAIL = "open-access"
+
+
+def login_required() -> bool:
+    return os.getenv("REQUIRE_LOGIN", "false").lower() in {"1", "true", "yes"}
+
 
 def _secret_key() -> str:
     key = os.getenv("SECRET_KEY")
@@ -114,6 +123,10 @@ def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> CurrentUser:
+    if not login_required():
+        user = CurrentUser(id="open-access", email=OPEN_ACCESS_EMAIL, role=ROLE_ADMIN)
+        request.state.current_user = user
+        return user
     if credentials is None:
         raise HTTPException(401, "Missing bearer token", headers={"WWW-Authenticate": "Bearer"})
     try:

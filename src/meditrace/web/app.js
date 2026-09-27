@@ -37,11 +37,15 @@ const session = {
   },
 };
 
+// Set from /api/health. With REQUIRE_LOGIN off on the server there is no
+// sign-in screen and requests need no token.
+let loginRequired = false;
+const isSignedIn = () => !loginRequired || Boolean(session.token);
+
 function updateSessionChrome() {
-  const authenticated = Boolean(session.token);
-  loginOverlay.classList.toggle('visible', !authenticated);
-  logoutButton.hidden = !authenticated;
-  sessionUser.textContent = authenticated ? `${session.email} · ${session.role.toUpperCase()}` : '';
+  loginOverlay.classList.toggle('visible', !isSignedIn());
+  logoutButton.hidden = !loginRequired || !session.token;
+  sessionUser.textContent = loginRequired && session.token ? `${session.email} · ${session.role.toUpperCase()}` : '';
 }
 
 function signOut() {
@@ -85,7 +89,7 @@ loginForm.addEventListener('submit', async event => {
 logoutButton.addEventListener('click', signOut);
 
 async function loadDocuments() {
-  if (!session.token) return;
+  if (!isSignedIn()) return;
   try {
     const response = await authFetch('/api/documents');
     if (!response.ok) throw new Error('Document register is unavailable');
@@ -179,8 +183,14 @@ askForm.addEventListener('submit', async event => {
   askResult.innerHTML = `<article><strong>${escapeHtml(result.answer)}</strong><p>${result.insufficient_evidence ? 'No supporting facts were retrieved.' : `Cited facts: ${citations}`}</p></article>`;
 });
 
-updateSessionChrome();
-loadDocuments();
+(async () => {
+  try {
+    const health = await (await fetch('/api/health')).json();
+    loginRequired = health.login_required === true;
+  } catch { /* server unreachable: loadDocuments shows the error */ }
+  updateSessionChrome();
+  loadDocuments();
+})();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));

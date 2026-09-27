@@ -82,6 +82,7 @@ def setup_app(monkeypatch, url):
     monkeypatch.setenv("OBJECT_STORE_BACKEND", "database")
     monkeypatch.setenv("ENCRYPTION_KEY", "kX8f1QhZ2sYbYQxvV3v4qz5rN0jz3sVfE9pJcRZmA0g=")
     monkeypatch.setenv("SECRET_KEY", "test-secret-key-at-least-32-bytes-long!!")
+    monkeypatch.setenv("REQUIRE_LOGIN", "true")
     get_settings.cache_clear()
     import src.meditrace.database as database
 

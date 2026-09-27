@@ -11,6 +11,7 @@ def build_client(tmp_path):
     os.environ["OBJECT_STORE_PATH"] = str(tmp_path / "objects")
     os.environ["ENCRYPTION_KEY"] = "kX8f1QhZ2sYbYQxvV3v4qz5rN0jz3sVfE9pJcRZmA0g="
     os.environ["SECRET_KEY"] = "test-secret-key-at-least-32-bytes-long!!"
+    os.environ["REQUIRE_LOGIN"] = "true"
     from src.meditrace import config
 
     config.get_settings.cache_clear()
@@ -236,3 +237,19 @@ def test_sensitive_columns_are_ciphertext_in_the_database(tmp_path, capsys):
         show_records.main()
         printed = capsys.readouterr().out
         assert "secret-name.txt" in printed and "8.1" in printed
+
+
+def test_without_require_login_the_api_is_open(tmp_path):
+    with build_client(tmp_path) as client:
+        os.environ["REQUIRE_LOGIN"] = "false"
+        try:
+            assert client.get("/api/health").json()["login_required"] is False
+            upload = client.post(
+                "/api/documents",
+                data={"patient_id": "SYN-OPEN"},
+                files={"file": ("note.txt", b"BP 120/80", "text/plain")},
+            )
+            assert upload.status_code == 201
+            assert client.get("/api/documents").json()["total"] == 1
+        finally:
+            os.environ["REQUIRE_LOGIN"] = "true"

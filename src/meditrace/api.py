@@ -20,6 +20,7 @@ from .auth import (
     authenticate,
     create_access_token,
     get_current_user,
+    login_required,
     require_admin,
     require_write_access,
     ACCESS_TOKEN_MINUTES,
@@ -115,7 +116,8 @@ async def security_headers(request: Request, call_next):
 
 
 def _security_status() -> str:
-    if os.getenv("SECRET_KEY") and os.getenv("ENCRYPTION_KEY"):
+    secret_ok = bool(os.getenv("SECRET_KEY")) or not login_required()
+    if secret_ok and os.getenv("ENCRYPTION_KEY"):
         return "configured"
     if settings.serverless:
         return "not_configured"
@@ -145,6 +147,7 @@ def health(response: Response) -> HealthRead:
         object_store=storage_status,
         model="configured" if settings.model_endpoint else "not_configured",
         security=security_status,
+        login_required=login_required(),
     )
 
 

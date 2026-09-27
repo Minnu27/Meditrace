@@ -86,6 +86,7 @@ class HealthRead(BaseModel):
     object_store: str
     model: str
     security: str
+    login_required: bool = True
 
 
 class ExtractionJobRead(BaseModel):

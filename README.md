@@ -4,6 +4,8 @@ MediTrace is an evidence-first workspace for turning synthetic and de-identified
 
 > **Decision-support prototype on synthetic/de-identified research data — not a diagnostic device.** Do not upload identifiable patient information or use this software for clinical care.
 
+**Verifiable record.** Every fact and every answer is tamper-evident and independently verifiable. Each fact carries its evidence quote, source-document hash, and extractor/model/prompt version under a salted content hash. Every read, write, and answer goes into a hash-chained audit log, and periodic Merkle-root anchors are signed with Ed25519 and can be countersigned by an RFC 3161 timestamp authority. Click any fact ID to see the full proof path, or export a proof bundle and check it offline with `scripts/verify_proof.py`. Only hashes are ever anchored. Design, threat model, and limits are in [`docs/VERIFIABLE_RECORD.md`](docs/VERIFIABLE_RECORD.md).
+
 ## What works now
 
 - A FastAPI service with upload, document register, source retrieval, and evidence-fact endpoints, all behind bearer-token authentication and role-based write access (`admin`/`clinician`/`reviewer`) — see [`docs/SECURITY.md`](docs/SECURITY.md).
@@ -12,13 +14,17 @@ MediTrace is an evidence-first workspace for turning synthetic and de-identified
 - SHA-256 fingerprints for immutable source identification and rollback-safe file persistence.
 - SQLAlchemy storage that defaults to SQLite for a zero-setup demo and supports Postgres or MySQL through `DATABASE_URL` / `MYSQL_*`.
 - Sensitive columns (document filenames, fact values/details, evidence quotes, raw stored document bytes) are encrypted at rest with Fernet; see `docs/SECURITY.md` for exactly which columns and why some (like `patient_id`) intentionally aren't.
-- An append-only audit log (`audit_events`, `GET /api/audit`, admin-only) records who read or wrote what patient data and when.
+- A hash-chained audit log (`audit_events`, `GET /api/audit`, `GET /api/audit/verify`, admin-only) records every read, write, and answer. Each entry commits to the previous one and to the written record's hash. Periodic signed Merkle-root anchors make even a consistent rewrite of the log detectable.
+- Provenance on every fact (source SHA-256, extractor, extractor/OCR version, model and prompt version, salted content hash) and on every persisted answer (cited fact hashes, answerer, prompt version). `/api/verify/...` recomputes the whole chain on demand; see [`docs/VERIFIABLE_RECORD.md`](docs/VERIFIABLE_RECORD.md).
+- OCR ingestion for scanned reports and prescriptions (PNG/JPEG and image-only PDFs) via Tesseract on the worker (`requirements-ocr.txt`). Per-line OCR confidence flows into each fact's confidence and evidence.
+- Observed dates come from the document itself ("Collected:", "Date prescribed:"…). When none is found, the upload date is used and visibly labelled. Reference ranges, derived high/low status, prescriptions, and discontinuations are extracted too.
+- Monitoring-gap flags (e.g. a medication with no follow-up lab in its window, or an abnormal result never repeated) sit alongside trend and contradiction flags. The rules are illustrative, versioned, and cite their source facts.
 - A responsive “Industry” interface with the research-only disclaimer visible at all times, a sign-in gate, and panels for trends/contradictions and evidence-grounded Q&A.
 - Extraction requests create durable jobs; parsing runs only in a separate worker process.
 - Deterministic lab, medication, radiology, and discharge extraction supports text sources with explicit `unknown` classification.
 - A configured OpenAI-compatible MedGemma gateway can receive source text through an explicit endpoint; returned facts are validated before persistence. Without one configured, extraction, trend/contradiction flags, and Q&A still work fully deterministically at zero API cost.
 - Patient timelines group facts by month or visit, calculate prior numeric deltas without a model, and show a static reliability tier per fact.
-- Deterministic trend flags (e.g. a rising HbA1c) and contradiction flags (conflicting results across documents, conflicting medication doses) — flags only, never an auto-resolved winner (`GET /api/patients/{id}/flags`).
+- Deterministic trend flags (e.g. a rising HbA1c), contradiction flags (conflicting results across documents, conflicting medication doses), and monitoring-gap flags. These are flags only, never an auto-resolved winner (`GET /api/patients/{id}/flags?as_of=YYYY-MM-DD`).
 - Evidence-grounded Q&A that retrieves only from this patient's structured facts, cites fact IDs on every claim, and returns "not enough evidence" rather than guessing (`POST /api/patients/{id}/ask`).
 - An optional chest X-ray inference endpoint (`POST /api/documents/{id}/cxr-analyze`) that runs a real model against a checkpoint you train — it does not ship a pretrained checkpoint and returns 503 honestly until you provide one via `CXR_MODEL_PATH` (see `notebooks/CXR_Sentinel_Full.ipynb`).
 
@@ -33,8 +39,12 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn src.meditrace.api:app --reload
-# In another terminal, process queued extraction jobs:
-python -m src.meditrace.worker
+# In another terminal, process queued extraction jobs (and anchor every 10 min):
+ANCHOR_INTERVAL_SECONDS=600 python -m src.meditrace.worker
+# Optional: OCR for scanned reports/prescriptions on the worker
+pip install -r requirements-ocr.txt   # plus: apt install tesseract-ocr / brew install tesseract
+# Optional: seed a synthetic patient and watch tampering get caught
+python scripts/demo_walkthrough.py --tamper
 ```
 
 Open <http://127.0.0.1:8000>. SQLite metadata is written to `meditrace.db`; source documents are stored beneath `data/documents/`. Both are ignored by Git. A throwaway auth/encryption key is generated automatically for this mode; sign in by first bootstrapping an account (see "Sign in" below).
@@ -98,7 +108,12 @@ Interactive API documentation is available at `/docs`. Every route below except 
 | `GET` | `/api/patients/{patient_id}/flags` | Deterministic trend and contradiction flags (Phase 4) |
 | `POST` | `/api/patients/{patient_id}/ask` | Evidence-grounded Q&A over this patient's facts only (Phase 5) |
 | `POST` | `/api/documents/{id}/cxr-analyze` | **write** — Chest X-ray inference; 503 until `CXR_MODEL_PATH` is configured (Phase 6) |
-| `GET` | `/api/audit` | **admin only** — Append-only access log |
+| `GET` | `/api/audit` | **admin only**: hash-chained access log |
+| `GET` | `/api/audit/verify` | **admin only**: recompute the full chain and check the latest anchor |
+| `GET` | `/api/verify/facts/{id}` · `/api/verify/answers/{id}` | Recompute a fact's or answer's full proof path |
+| `GET` | `/api/verify/{facts\|answers}/{id}/bundle` | Proof bundle for offline verification (`scripts/verify_proof.py`) |
+| `GET` / `POST` | `/api/anchors` | List anchors / **admin**: anchor the chain now |
+| `GET` | `/api/anchors/public-key` | Anchor-signing public key (public) |
 
 ## Install as an app
 
@@ -155,11 +170,11 @@ pytest -q
 python -m src.selftest
 ```
 
-The first command covers the MediTrace upload-to-evidence loop on synthetic text. The second exercises the legacy CXR research pipeline on generated images only.
+The first command covers the MediTrace upload-to-evidence loop on synthetic text, OCR on a generated scan, and every tampering scenario in `tests/test_verifiable_record.py` (including an RFC 3161 round trip against a throwaway local OpenSSL TSA). The second exercises the legacy CXR research pipeline on generated images only.
 
 ## Scope boundaries
 
 - **Data:** public, synthetic, or properly de-identified research datasets only. Dataset access terms still apply.
 - **Clinical use:** prohibited. This prototype does not diagnose, recommend treatment, or replace professional review.
-- **Current phase:** Phase 0 through the Phase 1–3 text workflow are solid. Phase 4 (trends/contradictions) and Phase 5 (grounded Q&A) have a real, tested first implementation but haven't been through the fixed evaluation sets `PROJECT_PLAN.md` calls for. Phase 6 (CXR) is wired end-to-end but ships no pretrained checkpoint — you train one. Scanned-image OCR still requires a Docling-enabled worker deployment; the base worker fails explicitly rather than fabricating text.
+- **Current phase:** Phase 0 through the Phase 1–3 text workflow are solid. Phase 4 (trends/contradictions) and Phase 5 (grounded Q&A) have a real, tested first implementation but haven't been through the fixed evaluation sets `PROJECT_PLAN.md` calls for. Phase 6 (CXR) is wired end-to-end but ships no pretrained checkpoint — you train one. Scanned-image OCR runs on the worker with Tesseract (`requirements-ocr.txt`). Without it, extraction of a scan fails explicitly rather than fabricating text. OCR can misread, and per-line confidence is shown for that reason.
 - **Security:** see [`docs/SECURITY.md`](docs/SECURITY.md) for the full picture. In short: authentication, role-based write access, encryption at rest for sensitive columns, an append-only audit log, and security headers are implemented; there is no per-patient access control, no malware scanning on uploads, and no compliance certification. This is a defensible starting posture for research data, not a production clinical deployment.

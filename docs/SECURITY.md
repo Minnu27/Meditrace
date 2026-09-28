@@ -52,6 +52,11 @@ What "strong practical security" means concretely:
 6. **Audit log**: `audit_events` is append-only — no route updates or
    deletes it — and every read or write of patient data records who, what,
    and when (`src/meditrace/audit.py`). `GET /api/audit` is admin-only.
+   Entries are **hash-chained** (each commits to the previous entry and to
+   the written record's content hash), and periodic Ed25519-signed Merkle
+   roots (optionally RFC 3161-timestamped) make rewrites detectable. See
+   [`VERIFIABLE_RECORD.md`](VERIFIABLE_RECORD.md) for the threat model,
+   including what a key-holding insider can still do between anchors.
 7. **Security headers**: HSTS, `X-Content-Type-Options: nosniff`,
    `X-Frame-Options: DENY`, a restrictive `Content-Security-Policy`, and
    `Referrer-Policy: no-referrer` are set both by FastAPI middleware and by
@@ -86,6 +91,16 @@ deploying. Rotate `SECRET_KEY` any time and every session invalidates.
 Rotating `ENCRYPTION_KEY` requires re-encrypting existing rows first — there
 is no built-in migration for that; treat it as a one-way key, back it up
 somewhere your secrets manager controls, and never commit it.
+
+## Anchor signing key
+
+`ANCHOR_SIGNING_KEY` (base64 of a 32-byte Ed25519 seed; generate with
+`python -m src.meditrace.anchoring --generate-key`) signs audit-log anchors.
+Local development auto-generates `.meditrace_anchor_key` (gitignored); on
+Vercel anchoring refuses to run without it. Anyone holding this key can sign
+anchors, so keep it separate from `ENCRYPTION_KEY`, publish the public half
+(`GET /api/anchors/public-key`), and use `ANCHOR_TSA_URL` so that anchors do
+not rest on this key alone.
 
 ## What this is not
 

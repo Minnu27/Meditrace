@@ -1,7 +1,7 @@
 // Installable-app shell. Only the static UI is cached so the app opens
 // instantly; /api/* responses (patient data, tokens) are never cached or
 // intercepted, so nothing sensitive is left on the device.
-const CACHE = 'meditrace-shell-v1';
+const CACHE = 'meditrace-shell-v2';
 const SHELL = ['/', '/styles.css', '/app.js', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon.svg'];
 
 self.addEventListener('install', event => {

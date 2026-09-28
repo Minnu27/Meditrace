@@ -31,7 +31,7 @@ def _fact(**overrides) -> Fact:
 
 
 def test_answer_question_cites_retrieved_facts():
-    facts = [_fact(), _fact(test_or_finding="Glucose", value="110", unit="mg/dL")]
+    facts = [_fact(), _fact(test_or_finding="Glucose", normalized_code="2345-7", value="110", unit="mg/dL")]
     result = answer_question(facts, "What was the HbA1c?")
     assert not result.insufficient_evidence
     assert result.cited_fact_ids == [str(facts[0].id)]

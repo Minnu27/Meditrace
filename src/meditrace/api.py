@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import date
 from hashlib import sha256
+import json
 from pathlib import Path
 import os
 import uuid
@@ -14,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, selectinload
 
-from . import analysis, audit, imaging, qa
+from . import analysis, anchoring, audit, imaging, qa, verify
 from .auth import (
     CurrentUser,
     authenticate,
@@ -28,7 +30,7 @@ from .auth import (
 from .config import get_settings
 from .database import create_schema, get_session, engine
 from .extraction import HttpModelProvider, extract_text
-from .models import AuditEvent, Document, ExtractionJob, Fact
+from .models import Answer, AuditEvent, Document, ExtractionJob, Fact
 from .schemas import (
     AskRequest,
     AskResponse,
@@ -47,6 +49,12 @@ from .schemas import (
     PatientFlagsRead,
     TimelineEntry,
     TimelineRead,
+)
+from .provenance import (
+    MANUAL_EXTRACTOR,
+    compute_answer_hash,
+    new_salt,
+    seal_fact,
 )
 from .storage import build_object_store
 
@@ -226,6 +234,7 @@ async def upload_document(
         resource_type="document",
         resource_id=str(document.id),
         patient_id=patient_id,
+        payload_digest=document.sha256,
     )
     return document
 
@@ -255,6 +264,15 @@ def enqueue_extraction(
     document.status = DocumentStatus.processing
     session.add(job)
     session.commit()
+    audit.record(
+        session,
+        user_email=user.email,
+        role=user.role,
+        action="enqueue_extraction",
+        resource_type="document",
+        resource_id=str(document.id),
+        patient_id=document.patient_id,
+    )
     return job
 
 
@@ -267,6 +285,14 @@ def get_job(
     job = session.get(ExtractionJob, job_id)
     if job is None:
         raise HTTPException(404, "Extraction job not found")
+    audit.record(
+        session,
+        user_email=user.email,
+        role=user.role,
+        action="view_job",
+        resource_type="extraction_job",
+        resource_id=str(job.id),
+    )
     return job
 
 
@@ -300,7 +326,15 @@ def submit_to_model(
         ):
             item["patient_id"] = document.patient_id
             validated = FactCreate.model_validate(item)
-            facts.append(Fact(source_document_id=document.id, **validated.model_dump()))
+            fact = Fact(id=uuid.uuid4(), source_document_id=document.id, **validated.model_dump())
+            seal_fact(
+                fact,
+                source_sha256=document.sha256,
+                extractor=f"model:{provider.name}",
+                extractor_version=None,
+                prompt_version=provider.prompt_version,
+            )
+            facts.append(fact)
         session.add_all(facts)
         document.status = DocumentStatus.ready
         session.commit()
@@ -312,11 +346,22 @@ def submit_to_model(
             "Model submission failed (%s)", type(exc).__name__
         )
         raise HTTPException(502, "Model submission failed") from exc
+    for fact in facts:
+        audit.record(
+            session,
+            user_email=user.email,
+            role=user.role,
+            action="submit_to_model",
+            resource_type="fact",
+            resource_id=str(fact.id),
+            patient_id=fact.patient_id,
+            payload_digest=fact.content_hash,
+        )
     audit.record(
         session,
         user_email=user.email,
         role=user.role,
-        action="submit_to_model",
+        action="model_submission_completed",
         resource_type="document",
         resource_id=str(document.id),
         patient_id=document.patient_id,
@@ -346,9 +391,19 @@ def list_documents(
     if patient_id:
         query = query.where(Document.patient_id == patient_id)
         count_query = count_query.where(Document.patient_id == patient_id)
-    return DocumentList(
+    result = DocumentList(
         items=list(session.scalars(query)), total=session.scalar(count_query) or 0
     )
+    audit.record(
+        session,
+        user_email=user.email,
+        role=user.role,
+        action="list_documents",
+        resource_type="document",
+        patient_id=patient_id,
+        detail=f"{result.total} documents",
+    )
+    return result
 
 
 @app.get("/api/documents/{document_id}", response_model=DocumentRead)
@@ -364,6 +419,15 @@ def get_document(
     )
     if document is None:
         raise HTTPException(404, "Document not found")
+    audit.record(
+        session,
+        user_email=user.email,
+        role=user.role,
+        action="view_document",
+        resource_type="document",
+        resource_id=str(document.id),
+        patient_id=document.patient_id,
+    )
     return document
 
 
@@ -402,7 +466,13 @@ def create_fact(
         raise HTTPException(404, "Document not found")
     if payload.patient_id != document.patient_id:
         raise HTTPException(409, "Fact patient does not match document patient")
-    fact = Fact(source_document_id=document_id, **payload.model_dump())
+    fact = Fact(id=uuid.uuid4(), source_document_id=document_id, **payload.model_dump())
+    seal_fact(
+        fact,
+        source_sha256=document.sha256,
+        extractor=f"{MANUAL_EXTRACTOR}:{user.role}",
+        extractor_version=None,
+    )
     session.add(fact)
     document.status = DocumentStatus.ready
     session.commit()
@@ -414,6 +484,7 @@ def create_fact(
         resource_type="fact",
         resource_id=str(fact.id),
         patient_id=document.patient_id,
+        payload_digest=fact.content_hash,
     )
     return fact
 
@@ -485,6 +556,7 @@ def patient_timeline(
 @app.get("/api/patients/{patient_id}/flags", response_model=PatientFlagsRead)
 def patient_flags(
     patient_id: str,
+    as_of: date | None = None,
     session: Session = Depends(get_session),
     user: CurrentUser = Depends(get_current_user),
 ) -> PatientFlagsRead:
@@ -503,10 +575,17 @@ def patient_flags(
         resource_type="patient",
         patient_id=patient_id,
     )
+    as_of = as_of or date.today()
     return PatientFlagsRead(
         patient_id=patient_id,
+        as_of=as_of,
         trends=analysis.compute_trends(facts),
         contradictions=analysis.detect_contradictions(facts),
+        gaps=analysis.detect_gaps(facts, as_of=as_of),
+        rule_versions={
+            "trends": analysis.TREND_THRESHOLD_VERSION,
+            "gaps": analysis.GAP_RULES_VERSION,
+        },
     )
 
 
@@ -525,15 +604,37 @@ def ask_patient_question(
         model_name=settings.model_name,
         model_api_key=settings.model_api_key,
     )
+    by_id = {str(f.id): f for f in facts}
+    answer = Answer(
+        id=uuid.uuid4(),
+        patient_id=patient_id,
+        question=payload.question,
+        answer_text=result.answer,
+        cited_fact_ids=list(result.cited_fact_ids),
+        cited_fact_hashes={fid: by_id[fid].content_hash for fid in result.cited_fact_ids if fid in by_id},
+        insufficient_evidence=result.insufficient_evidence,
+        confidence=result.confidence,
+        answerer=result.answerer,
+        answerer_version=result.answerer_version,
+        prompt_version=result.prompt_version,
+        commitment_salt=new_salt(),
+    )
+    answer.content_hash = compute_answer_hash(answer)
+    session.add(answer)
+    session.commit()
     audit.record(
         session,
         user_email=user.email,
         role=user.role,
         action="ask_question",
-        resource_type="patient",
+        resource_type="answer",
+        resource_id=str(answer.id),
         patient_id=patient_id,
-        # Questions can contain identifying free text, so only its size is logged.
+        # Questions can contain identifying free text: the log keeps only its
+        # size in the clear; the text itself is encrypted in `answers` and
+        # committed to through payload_digest.
         detail=f"question of {len(payload.question)} characters",
+        payload_digest=answer.content_hash,
     )
     return AskResponse(
         answer=result.answer,
@@ -541,6 +642,10 @@ def ask_patient_question(
         evidence=result.evidence,
         confidence=result.confidence,
         insufficient_evidence=result.insufficient_evidence,
+        answer_id=answer.id,
+        content_hash=answer.content_hash,
+        answerer=result.answerer,
+        prompt_version=result.prompt_version,
     )
 
 
@@ -560,6 +665,7 @@ def cxr_analyze(
     except imaging.CXRUnavailable as exc:
         raise HTTPException(503, str(exc)) from exc
     fact = Fact(
+        id=uuid.uuid4(),
         source_document_id=document.id,
         patient_id=document.patient_id,
         fact_type="imaging",
@@ -574,6 +680,12 @@ def cxr_analyze(
             "modality": "chest_xray",
         },
     )
+    seal_fact(
+        fact,
+        source_sha256=document.sha256,
+        extractor=f"cxr:{result.model_version}",
+        extractor_version=result.checkpoint_sha256[:16],
+    )
     session.add(fact)
     session.commit()
     audit.record(
@@ -581,9 +693,10 @@ def cxr_analyze(
         user_email=user.email,
         role=user.role,
         action="cxr_analyze",
-        resource_type="document",
-        resource_id=str(document.id),
+        resource_type="fact",
+        resource_id=str(fact.id),
         patient_id=document.patient_id,
+        payload_digest=fact.content_hash,
     )
     return CXRAnalysisRead(
         document_id=document.id,
@@ -600,10 +713,149 @@ def list_audit_events(
     session: Session = Depends(get_session),
     user: CurrentUser = Depends(require_admin),
 ) -> list[AuditEvent]:
-    query = select(AuditEvent).order_by(AuditEvent.occurred_at.desc()).limit(min(limit, 1000))
+    query = select(AuditEvent).order_by(AuditEvent.seq.desc()).limit(min(limit, 1000))
     if patient_id:
         query = query.where(AuditEvent.patient_id == patient_id)
-    return list(session.scalars(query))
+    events = list(session.scalars(query))
+    audit.record(
+        session,
+        user_email=user.email,
+        role=user.role,
+        action="view_audit_log",
+        resource_type="audit",
+        patient_id=patient_id,
+    )
+    return events
+
+
+@app.get("/api/audit/verify")
+def verify_audit_chain(
+    session: Session = Depends(get_session),
+    user: CurrentUser = Depends(require_admin),
+) -> dict:
+    report = audit.verify_chain(session)
+    latest = anchoring.latest_anchor(session)
+    anchors_ok = True
+    if latest is not None:
+        checks = anchoring.anchor_checks(session, latest)
+        anchors_ok = checks["signature_valid"] and checks["current_log_matches_root"]
+    audit.record(
+        session,
+        user_email=user.email,
+        role=user.role,
+        action="verify_audit_chain",
+        resource_type="audit",
+        success=report.ok and anchors_ok,
+        detail=f"{report.length} entries checked",
+    )
+    return {
+        "ok": report.ok and anchors_ok,
+        "length": report.length,
+        "head_seq": report.head_seq,
+        "head_hash": report.head_hash,
+        "problems": report.problems,
+        "latest_anchor": anchoring.anchor_public(latest) if latest else None,
+        "latest_anchor_valid": anchors_ok if latest else None,
+        "unanchored_entries": (report.head_seq or 0) - (latest.to_seq if latest else 0),
+    }
+
+
+# ------------------------------------------------------------- anchors
+
+
+@app.get("/api/anchors/public-key")
+def anchor_public_key() -> dict:
+    """Public on purpose: third parties need it to check anchor signatures."""
+    try:
+        return anchoring.server_public_key()
+    except anchoring.AnchorError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.get("/api/anchors")
+def list_anchors(
+    limit: int = 50,
+    session: Session = Depends(get_session),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    rows = session.scalars(
+        select(anchoring.Anchor).order_by(anchoring.Anchor.to_seq.desc()).limit(min(limit, 500))
+    )
+    return [anchoring.anchor_public(a) for a in rows]
+
+
+@app.post("/api/anchors", status_code=201)
+def create_anchor_now(
+    session: Session = Depends(get_session),
+    user: CurrentUser = Depends(require_admin),
+) -> dict:
+    try:
+        anchor = anchoring.create_anchor(session, tsa_url=settings.anchor_tsa_url)
+    except anchoring.AnchorError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if anchor is None:
+        return {"anchored": False, "message": "No new audit entries since the last anchor"}
+    return {"anchored": True, "anchor": anchoring.anchor_public(anchor)}
+
+
+# -------------------------------------------------------------- verify
+
+
+def _audited_verify(session: Session, user: CurrentUser, kind: str, record_id: uuid.UUID, report: dict | None, action: str):
+    if report is None:
+        raise HTTPException(404, f"{kind.title()} not found")
+    audit.record(
+        session,
+        user_email=user.email,
+        role=user.role,
+        action=action,
+        resource_type=kind,
+        resource_id=str(record_id),
+        patient_id=(report.get("fact") or report.get("answer") or report.get("commitment") or {}).get("patient_id"),
+        success=report.get("verdict", "verified") != "failed",
+        detail=report.get("verdict"),
+    )
+
+
+@app.get("/api/verify/facts/{fact_id}")
+def verify_fact(
+    fact_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    report = verify.verify_fact(session, store, fact_id)
+    _audited_verify(session, user, "fact", fact_id, report, "verify_fact")
+    return report
+
+
+@app.get("/api/verify/answers/{answer_id}")
+def verify_answer(
+    answer_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    report = verify.verify_answer(session, store, answer_id)
+    _audited_verify(session, user, "answer", answer_id, report, "verify_answer")
+    return report
+
+
+@app.get("/api/verify/{kind}/{record_id}/bundle")
+def download_proof_bundle(
+    kind: str,
+    record_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    user: CurrentUser = Depends(get_current_user),
+) -> Response:
+    if kind not in {"facts", "answers"}:
+        raise HTTPException(404, "Unknown record kind")
+    singular = kind[:-1]
+    bundle = verify.proof_bundle(session, singular, record_id)
+    _audited_verify(session, user, singular, record_id, bundle, "export_proof_bundle")
+    return Response(
+        json.dumps(bundle, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="meditrace-proof-{singular}-{str(record_id)[:8]}.json"'},
+    )
 
 
 frontend = Path(__file__).parent / "web"

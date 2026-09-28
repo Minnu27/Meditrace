@@ -22,6 +22,8 @@ class Settings:
     mysql_ssl_ca: str | None = None
     serverless: bool = False
     allowed_origins: tuple[str, ...] = ()
+    anchor_tsa_url: str | None = None
+    anchor_interval_seconds: float = 0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -77,6 +79,8 @@ class Settings:
             model_name=os.getenv("MODEL_NAME", cls.model_name),
             auto_process=os.getenv("AUTO_PROCESS", "false").lower()
             in {"1", "true", "yes"},
+            anchor_tsa_url=os.getenv("ANCHOR_TSA_URL") or None,
+            anchor_interval_seconds=float(os.getenv("ANCHOR_INTERVAL_SECONDS", "0")),
             allowed_origins=tuple(
                 origin.strip()
                 for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")

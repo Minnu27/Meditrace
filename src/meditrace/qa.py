@@ -15,6 +15,18 @@ import re
 
 from .extraction import call_openai_compatible_json
 from .models import Fact
+from .provenance import prompt_version
+
+DETERMINISTIC_ANSWERER = "meditrace-deterministic-qa"
+DETERMINISTIC_ANSWERER_VERSION = "2026.09"
+QA_PROMPT = (
+    "Answer the question using ONLY the provided facts. "
+    "Return JSON {answer: str, cited_fact_ids: [str]}. "
+    "Every cited_fact_ids entry must be one of the provided fact_id "
+    "values. If the facts do not answer the question, set answer to "
+    "'Not enough evidence' and cited_fact_ids to []."
+)
+QA_PROMPT_LABEL = "qa-v1"
 
 _STOPWORDS = {
     "a", "an", "the", "is", "are", "was", "were", "what", "when", "did",
@@ -30,11 +42,23 @@ class AnswerResult:
     evidence: list[dict] = field(default_factory=list)
     confidence: float = 0.0
     insufficient_evidence: bool = True
+    answerer: str = DETERMINISTIC_ANSWERER
+    answerer_version: str | None = DETERMINISTIC_ANSWERER_VERSION
+    prompt_version: str | None = None
 
 
 def _keywords(question: str) -> set[str]:
     words = re.findall(r"[a-z0-9%]+", question.lower())
     return {w for w in words if w not in _STOPWORDS and len(w) > 1}
+
+
+def _aliases(fact: Fact) -> list[str]:
+    """Names the same normalized test is known by ("HbA1c" for "Hemoglobin A1c")."""
+    from .extraction import LOINC_SUBSET
+
+    if not fact.normalized_code:
+        return []
+    return [alias for alias, (code, _) in LOINC_SUBSET.items() if code == fact.normalized_code]
 
 
 def retrieve(facts: list[Fact], question: str, top_k: int = 8) -> list[Fact]:
@@ -53,6 +77,8 @@ def retrieve(facts: list[Fact], question: str, top_k: int = 8) -> list[Fact]:
                     fact.value,
                     fact.status,
                     fact.unit,
+                    *_aliases(fact),
+                    (fact.evidence_location or {}).get("quote"),
                 ],
             )
         ).lower()
@@ -107,6 +133,11 @@ def answer_question(
     ]
     answer_text = _deterministic_answer(retrieved)
     cited_ids = sorted(retrieved_ids)
+    answerer, answerer_version, used_prompt = (
+        DETERMINISTIC_ANSWERER,
+        DETERMINISTIC_ANSWERER_VERSION,
+        None,
+    )
 
     if model_endpoint:
         try:
@@ -114,11 +145,7 @@ def answer_question(
                 model_endpoint,
                 model_name,
                 model_api_key,
-                "Answer the question using ONLY the provided facts. "
-                "Return JSON {answer: str, cited_fact_ids: [str]}. "
-                "Every cited_fact_ids entry must be one of the provided fact_id "
-                "values. If the facts do not answer the question, set answer to "
-                "'Not enough evidence' and cited_fact_ids to [].",
+                QA_PROMPT,
                 {"question": question, "facts": evidence},
             )
             model_answer = candidate.get("answer")
@@ -130,6 +157,8 @@ def answer_question(
             if model_answer and model_cited:
                 answer_text = model_answer
                 cited_ids = sorted(set(model_cited))
+                answerer, answerer_version = f"model:{model_name}", None
+                used_prompt = prompt_version(QA_PROMPT, QA_PROMPT_LABEL)
         except Exception:
             pass  # Fall back to the deterministic answer computed above.
 
@@ -139,4 +168,7 @@ def answer_question(
         evidence=[e for e in evidence if e["fact_id"] in cited_ids] or evidence,
         confidence=min(1.0, 0.5 + 0.1 * len(retrieved)),
         insufficient_evidence=False,
+        answerer=answerer,
+        answerer_version=answerer_version,
+        prompt_version=used_prompt,
     )

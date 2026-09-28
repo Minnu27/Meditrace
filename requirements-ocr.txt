@@ -1,0 +1,5 @@
+# Extraction-worker extras for scanned reports and prescriptions (OCR).
+# Also install the Tesseract binary: apt install tesseract-ocr  /  brew install tesseract
+pytesseract>=0.3.10
+Pillow>=10
+pypdfium2>=4

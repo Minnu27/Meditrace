@@ -12,14 +12,14 @@ This checklist turns the product roadmap into repository-sized increments. A che
 - [x] Persistent in-product and README research-use disclaimer.
 - [x] Synthetic API integration test for the complete upload → fact → evidence loop.
 - [ ] S3/MinIO adapter (local filesystem is the intentional first adapter).
-- [ ] Alembic migrations before the schema begins evolving.
+- [ ] Alembic migrations before the schema begins evolving. **Stopgap:** `schema_upgrade.py` adds the verifiable-record columns idempotently and chains/seals legacy rows.
 
 **Gate:** files go in, can be retrieved byte-for-byte, metadata persists, and facts cannot exist without document-scoped evidence.
 
 ## Phase 1 — Lab extraction
 
 - [ ] Introduce a background job boundary; never run parsing in the request process.
-- [ ] Parse text-native and scanned PDF lab reports with Docling.
+- [ ] Parse text-native and scanned PDF lab reports with Docling. **Partially replaced:** text PDFs via pypdf; scanned PDFs and PNG/JPEG via Tesseract OCR (`ocr.py`) with per-line confidence. No layout/table model and no bounding boxes from OCR yet.
 - [ ] Preserve page, line, and bounding-box coordinates through extraction.
 - [ ] Add a model-provider interface and MedGemma structured-output implementation.
 - [ ] Normalize lab tests against a versioned LOINC reference subset.
@@ -43,7 +43,8 @@ This checklist turns the product roadmap into repository-sized increments. A che
 
 - [x] Versioned threshold table for a small, reviewed set of common lab trends. (`analysis.TREND_THRESHOLDS`, `TREND_THRESHOLD_VERSION`)
 - [x] Candidate grouping followed by deterministic conflict checks. (`analysis.detect_contradictions`)
-- [x] Medication-dose contradiction rules. Allergy contradiction rules are **not implemented** — there is no allergy fact type in the extraction pipeline yet.
+- [x] Medication-dose contradiction rules (now ignoring doses before a documented discontinuation).
+- [x] Monitoring-gap flags: medication without follow-up lab, abnormal result never repeated. Versioned illustrative rules (`analysis.GAP_RULES_VERSION`), not clinical guidance. Not hand-checked against a reviewed evaluation set. Allergy contradiction rules are **not implemented** — there is no allergy fact type in the extraction pipeline yet.
 - [x] Flag cards cite both sources and never auto-resolve a conflict. (`GET /api/patients/{id}/flags`, always returns both/all conflicting fact IDs)
 
 **Gate status:** met for the implemented rules; not yet hand-checked against a reviewed evaluation set.
@@ -70,8 +71,13 @@ This checklist turns the product roadmap into repository-sized increments. A che
 - [ ] Relational fact graph only when a demonstrated query requires it. Not needed yet.
 - [x] Static, visible document reliability tiers. (`analysis.reliability_tier`, shown in the timeline UI)
 - [x] Append-only audit events for document/fact reads and writes, logins, timeline/flags/ask views, and CXR analysis. (`audit_events`, `GET /api/audit`, admin-only, no update/delete route exists). Not yet broken out into the exact query/answer/view/evidence/outcome/model-version taxonomy this line originally specified.
+- [x] Hash-chained audit log covering every read, write, and answer, including worker extraction. (`audit.py`, `GET /api/audit/verify`)
+- [x] Fact and answer provenance: source hash, extractor/OCR/model/prompt version, salted content commitment. Answers are persisted with the hashes of the facts they cite. (`provenance.py`, `answers` table)
+- [x] Periodic Merkle-root anchors signed with Ed25519; optional RFC 3161 countersignature; only hashes anchored. (`anchoring.py`, `tsa.py`)
+- [x] Verify page, `/api/verify/*`, proof bundles, and a standalone offline verifier. (`verify.py`, `scripts/verify_proof.py`)
+- [ ] Public anchoring (testnet transaction or transparency log). **Not implemented.** Anchors are self-signed, optionally with a TSA countersignature; see `docs/VERIFIABLE_RECORD.md` for what that does and doesn't prove.
 - [x] Consistent confidence and insufficient-evidence displays. (fact `confidence` + `reliability_tier` throughout; `AskResponse.insufficient_evidence` surfaced in the UI)
-- [ ] Three-minute walkthrough using conflicting synthetic sources only. **Not implemented.**
+- [x] Three-minute walkthrough using conflicting synthetic sources only. (`scripts/demo_walkthrough.py [--tamper]`; a scripted CLI walkthrough, not a recorded video)
 
 ## Non-negotiable release rules
 

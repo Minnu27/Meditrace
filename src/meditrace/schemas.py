@@ -58,6 +58,11 @@ class FactRead(FactCreate):
     id: UUID
     source_document_id: UUID
     created_at: datetime
+    source_sha256: str | None = None
+    extractor: str | None = None
+    extractor_version: str | None = None
+    prompt_version: str | None = None
+    content_hash: str | None = None
 
 
 class DocumentRead(BaseModel):
@@ -164,10 +169,24 @@ class ContradictionFlagRead(BaseModel):
     fact_ids: list[UUID]
 
 
+class GapFlagRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    kind: str
+    rule_id: str
+    rule_version: str
+    summary: str
+    due_by: str
+    fact_ids: list[UUID]
+    later_fact_ids: list[UUID] = []
+
+
 class PatientFlagsRead(BaseModel):
     patient_id: str
+    as_of: date
     trends: list[TrendFlagRead]
     contradictions: list[ContradictionFlagRead]
+    gaps: list[GapFlagRead] = []
+    rule_versions: dict[str, str] = {}
 
 
 class AskRequest(BaseModel):
@@ -180,6 +199,10 @@ class AskResponse(BaseModel):
     evidence: list[dict]
     confidence: float
     insufficient_evidence: bool
+    answer_id: UUID | None = None
+    content_hash: str | None = None
+    answerer: str | None = None
+    prompt_version: str | None = None
 
 
 class CXRAnalysisRead(BaseModel):
@@ -206,3 +229,7 @@ class AuditEventRead(BaseModel):
     patient_id: str | None
     success: bool
     detail: str | None
+    seq: int | None = None
+    payload_digest: str | None = None
+    prev_hash: str | None = None
+    entry_hash: str | None = None

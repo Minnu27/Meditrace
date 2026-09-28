@@ -143,6 +143,10 @@ def detect_contradictions(facts: list[Fact]) -> list[ContradictionFlag]:
             by_medication.setdefault(fact.test_or_finding.lower(), []).append(fact)
     for medication, group in by_medication.items():
         group = sorted(group, key=lambda f: f.observed_date)
+        # Only compare doses documented after the most recent discontinuation.
+        stops = [i for i, f in enumerate(group) if (f.details or {}).get("action") == "discontinued"]
+        if stops:
+            group = group[stops[-1] + 1 :]
         doses = {f.value for f in group}
         if len(doses) > 1:
             flags.append(
@@ -158,3 +162,127 @@ def detect_contradictions(facts: list[Fact]) -> list[ContradictionFlag]:
             )
 
     return flags
+
+
+# ------------------------------------------------------------------ gaps
+#
+# Monitoring-gap rules find what the *record* does not contain, e.g. a
+# medication with no follow-up lab. They are illustrative rules for a
+# synthetic demo, NOT clinical guidance, and a gap may simply mean a document
+# was never uploaded. Like every other flag, a gap cites the facts it was
+# computed from and never asserts anything about the patient.
+
+GAP_RULES_VERSION = "2026-09-demo"
+
+# medication -> list of requirements; each requirement is a set of LOINC codes
+# any one of which satisfies it, plus the window after the medication's first
+# documented date in which a result is expected.
+MONITORING_RULES: dict[str, dict] = {
+    "metformin": {
+        "rule_id": "metformin-glycemic-followup",
+        "requirements": [({"4548-4"}, "Hemoglobin A1c")],
+        "within_days": 180,
+    },
+    "lisinopril": {
+        "rule_id": "lisinopril-renal-followup",
+        "requirements": [({"2160-0"}, "Creatinine"), ({"2823-3"}, "Potassium")],
+        "within_days": 90,
+    },
+    "atorvastatin": {
+        "rule_id": "atorvastatin-lipid-followup",
+        "requirements": [({"13457-7", "2093-3"}, "Lipid panel (LDL or total cholesterol)")],
+        "within_days": 365,
+    },
+}
+ABNORMAL_REPEAT_WINDOW_DAYS = 180
+
+
+@dataclass
+class GapFlag:
+    kind: str
+    rule_id: str
+    rule_version: str
+    summary: str
+    due_by: str
+    fact_ids: list[str] = field(default_factory=list)
+    later_fact_ids: list[str] = field(default_factory=list)
+
+
+def _lab_key(fact: Fact) -> str:
+    return fact.normalized_code or fact.test_or_finding.lower()
+
+
+def detect_gaps(facts: list[Fact], as_of=None) -> list[GapFlag]:
+    """Facts must already be sorted by observed_date ascending."""
+    from datetime import date, timedelta
+
+    as_of = as_of or date.today()
+    labs = [f for f in facts if f.fact_type == "lab"]
+    gaps: list[GapFlag] = []
+
+    # 1. Medication with no follow-up monitoring lab in its window.
+    started: dict[str, list[Fact]] = {}
+    for fact in facts:
+        if fact.fact_type != "medication":
+            continue
+        if (fact.details or {}).get("action") == "discontinued":
+            continue
+        started.setdefault(fact.test_or_finding.lower(), []).append(fact)
+    for medication, med_facts in started.items():
+        rule = MONITORING_RULES.get(medication)
+        if not rule:
+            continue
+        start = med_facts[0].observed_date
+        due_by = start + timedelta(days=rule["within_days"])
+        if as_of <= due_by:
+            continue  # not yet due; absence is not a gap
+        for codes, label in rule["requirements"]:
+            matching = [f for f in labs if f.normalized_code in codes and f.observed_date > start]
+            in_window = [f for f in matching if f.observed_date <= due_by]
+            if in_window:
+                continue
+            gaps.append(
+                GapFlag(
+                    kind="missing_follow_up",
+                    rule_id=rule["rule_id"],
+                    rule_version=GAP_RULES_VERSION,
+                    summary=(
+                        f"{med_facts[0].test_or_finding} first documented {start.isoformat()}; "
+                        f"no {label} result recorded within {rule['within_days']} days"
+                        + (f" (a later one exists on {matching[0].observed_date.isoformat()})" if matching else "")
+                    ),
+                    due_by=due_by.isoformat(),
+                    fact_ids=[str(f.id) for f in med_facts],
+                    later_fact_ids=[str(f.id) for f in matching],
+                )
+            )
+
+    # 2. Abnormal lab result that is never repeated within the window.
+    for index, fact in enumerate(labs):
+        if fact.status not in {"high", "low", "abnormal"}:
+            continue
+        due_by = fact.observed_date + timedelta(days=ABNORMAL_REPEAT_WINDOW_DAYS)
+        if as_of <= due_by:
+            continue
+        repeats = [
+            f
+            for f in labs[index + 1 :]
+            if _lab_key(f) == _lab_key(fact) and fact.observed_date < f.observed_date <= due_by
+        ]
+        if repeats:
+            continue
+        gaps.append(
+            GapFlag(
+                kind="abnormal_without_repeat",
+                rule_id="abnormal-lab-repeat",
+                rule_version=GAP_RULES_VERSION,
+                summary=(
+                    f"{fact.test_or_finding} was {fact.status} ({fact.value}{fact.unit or ''}) on "
+                    f"{fact.observed_date.isoformat()}; no repeat result recorded within "
+                    f"{ABNORMAL_REPEAT_WINDOW_DAYS} days"
+                ),
+                due_by=due_by.isoformat(),
+                fact_ids=[str(fact.id)],
+            )
+        )
+    return gaps

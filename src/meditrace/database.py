@@ -35,7 +35,10 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 
 
 def create_schema() -> None:
+    from .schema_upgrade import upgrade
+
     Base.metadata.create_all(engine)
+    upgrade(engine, SessionLocal)
 
 
 def get_session() -> Generator[Session, None, None]:
